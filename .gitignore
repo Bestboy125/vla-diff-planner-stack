@@ -1,0 +1,58 @@
+# Local runtimes and caches
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.venv/
+**/node_modules/
+.codex_tmp/
+.pytest_cache/
+
+# Generated media, logs, datasets and model weights
+artifacts/
+data/
+log/
+weights/
+*.log
+*.mp4
+*.mkv
+*.avi
+*.tar.gz
+*.zip
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.jpg
+*.jpeg
+*.png
+wget-log
+
+# Local training outputs
+yolo_world_chair/dataset/
+yolo_world_chair/runs/
+
+# External Windows junction; source lives in another project
+DroneVoiceConsole_link/
+ground_station/ground_station.local.ps1
+
+# Local/private companion projects and deployment records
+AerialClaw-AerialClaw2.0/
+remote_desktop/
+REMOTE_DESKTOP_VALIDATION_REPORT.md
+HOST_VALIDATION_REPORT.md
+/*_VALIDATION_REPORT.md
+/*_INSTALL_REPORT.md
+
+# Frontend production output is rebuilt from source
+ground_station/frontend/dist/
+
+# ROS/colcon/catkin outputs
+**/build/
+**/devel/
+**/install/
+**/.catkin_tools/
+
+# OS/editor state
+.DS_Store
+Thumbs.db
+desktop.ini

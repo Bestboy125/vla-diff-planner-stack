@@ -1,0 +1,51 @@
+# P0 deployment contract. Replace every REQUIRED value before connecting flight control.
+schema_version: 1
+
+network:
+  onboard_ip: REQUIRED
+  inference_host_onboard_lan_ip: REQUIRED
+  inference_host_operator_lan_ip: REQUIRED
+  operator_laptop_ip: REQUIRED
+  control_port: 50051
+  control_transport: tcp_ndjson
+  control_schema_version: 1
+  control_auth_token_source: ONBOARD_BRIDGE_TOKEN
+  openvla_http_port: 5007
+  video_port: 8554
+  require_static_or_reserved_ips: true
+
+ros:
+  distro: noetic
+  rgb_topic: REQUIRED
+  rgb_encoding: REQUIRED
+  rgb_width: REQUIRED
+  rgb_height: REQUIRED
+  rgb_fps: REQUIRED
+  odom_topic: REQUIRED
+  world_frame: REQUIRED
+  body_frame: REQUIRED
+  camera_frame: REQUIRED
+  planner_goal_topic: /goal
+  planner_yaw_topic: /planning/yaw
+  position_command_topic: /setpoints_cmd
+
+openvla:
+  model_path: REQUIRED
+  unnorm_key: real
+  action_semantic: [dx_body, dy_body, dz_body, d_yaw]
+  action_units: [m, m, m, rad]
+  proprio_semantic: [x_mission, y_mission, z_mission, yaw_mission]
+  proprio_units: [m, m, m, deg]
+
+safety_baseline:
+  inference_rate_hz: 2.0
+  action_ttl_ms: 500
+  max_frame_age_ms: 150
+  require_finite_action: true
+  reject_out_of_order_commands: true
+  remote_control_has_priority: true
+  onboard_live_publish_enabled_by_default: false
+  max_goal_step_m: 1.0
+  min_goal_z_m: 0.1
+  max_goal_z_m: 2.0
+  command_watchdog_timeout_ms: 1000

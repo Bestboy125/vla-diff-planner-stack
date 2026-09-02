@@ -1,0 +1,12 @@
+<launch>
+  <include file="$(find atomic_skill_executor)/launch/run_atomic_skills_sim.launch">
+    <arg name="run_smoke_test" value="false"/>
+  </include>
+  <node pkg="semantic_3d_localizer" type="semantic_target_sim.py"
+        name="semantic_target_sim" output="screen" launch-prefix="bash -c 'sleep 8; exec $0 $@'">
+    <rosparam command="load" file="$(find semantic_3d_localizer)/config/stereo_camera.yaml"/>
+    <param name="odom_topic" value="/drone_0_visual_slam/odom"/>
+    <param name="timeout" value="60.0"/>
+  </node>
+</launch>
+

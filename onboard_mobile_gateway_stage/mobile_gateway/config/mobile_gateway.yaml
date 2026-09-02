@@ -1,0 +1,45 @@
+# Network endpoints on the isolated UAV LAN.
+websocket_host: 0.0.0.0
+websocket_port: 8765
+http_host: 0.0.0.0
+http_port: 8080
+advertise_host: 127.0.0.1
+auth_token_file: REQUIRED
+video_auth_required: true
+
+# Safety gates. Deployment and transport tests keep both false.
+command_forwarding_enabled: false
+mission_forwarding_enabled: false
+command_ttl_sec: 10.0
+max_clock_skew_sec: 5.0
+
+# Existing onboard interfaces; no original Diff-Planner parameters are changed.
+atomic_action_name: /atomic_skill_executor/execute
+mission_request_topic: /mobile_gateway/mission_request
+flight_state_topic: /mavros/state
+battery_topic: /mavros/battery
+primary_odom_topic: /ekf/ekf_odom
+fallback_odom_topic: /mavros/local_position/odom
+odom_timeout: 1.0
+status_rate: 2.0
+
+# Defaults match the existing atomic_skill_smoke_test.py values.
+default_move_distance: 0.35
+default_rotate_angle_deg: 20.0
+default_orbit_radius: 1.0
+default_orbit_angle_deg: 45.0
+default_timeout: 30.0
+max_move_distance: 3.0
+max_rotate_angle_deg: 180.0
+max_orbit_radius: 5.0
+max_orbit_angle_deg: 360.0
+
+# ros_compressed subscribes without opening a camera. gstreamer_csi opens Jetson CSI.
+camera_mode: ros_compressed
+compressed_image_topic: /camera/color/image_raw/compressed
+camera_sensor_id: 0
+camera_width: 1280
+camera_height: 720
+camera_fps: 20
+jpeg_quality: 75
+stream_max_fps: 15.0
