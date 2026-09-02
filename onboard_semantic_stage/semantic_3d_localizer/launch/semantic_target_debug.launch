@@ -1,0 +1,9 @@
+<launch>
+  <!-- Geometry-only bench validation. Never publishes /goal. -->
+  <include file="$(find semantic_3d_localizer)/launch/semantic_target_real.launch">
+    <arg name="execution_enabled" value="false"/>
+    <arg name="publish_planner_goal" value="false"/>
+    <arg name="target_class" value="geometry_test"/>
+    <arg name="debug_bbox" value="[220, 140, 420, 360]"/>
+  </include>
+</launch>

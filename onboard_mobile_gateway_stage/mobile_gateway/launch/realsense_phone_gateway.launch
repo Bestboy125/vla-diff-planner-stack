@@ -1,0 +1,39 @@
+<launch>
+  <arg name="command_forwarding_enabled" default="false"/>
+  <arg name="mission_forwarding_enabled" default="false"/>
+  <arg name="enable_color" default="true"/>
+  <arg name="enable_infra1" default="true"/>
+  <arg name="enable_infra2" default="true"/>
+  <arg name="enable_depth" default="true"/>
+
+  <!-- Camera acquisition only. VINS, PX4Ctrl and planners are intentionally not started here. -->
+  <include file="$(find realsense2_camera)/launch/rs_camera.launch">
+    <arg name="enable_color" value="$(arg enable_color)"/>
+    <arg name="enable_infra" value="true"/>
+    <arg name="enable_infra1" value="$(arg enable_infra1)"/>
+    <arg name="enable_infra2" value="$(arg enable_infra2)"/>
+    <arg name="enable_depth" value="$(arg enable_depth)"/>
+    <arg name="enable_gyro" value="false"/>
+    <arg name="enable_accel" value="false"/>
+    <arg name="color_width" value="640"/>
+    <arg name="color_height" value="480"/>
+    <arg name="color_fps" value="30"/>
+    <arg name="infra_width" value="640"/>
+    <arg name="infra_height" value="480"/>
+    <arg name="infra_fps" value="15"/>
+    <arg name="depth_width" value="640"/>
+    <arg name="depth_height" value="480"/>
+    <arg name="depth_fps" value="30"/>
+  </include>
+
+  <!-- Converts YOLO's raw color input into the gateway's bandwidth-friendly MJPEG input. -->
+  <node pkg="image_transport" type="republish" name="mobile_color_compressor"
+        args="raw in:=/camera/color/image_raw compressed out:=/camera/color/image_raw"/>
+
+  <include file="$(find mobile_gateway)/launch/mobile_gateway.launch">
+    <arg name="command_forwarding_enabled" value="$(arg command_forwarding_enabled)"/>
+    <arg name="mission_forwarding_enabled" value="$(arg mission_forwarding_enabled)"/>
+    <arg name="camera_mode" value="ros_compressed"/>
+    <arg name="compressed_image_topic" value="/camera/color/image_raw/compressed"/>
+  </include>
+</launch>

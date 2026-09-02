@@ -1,0 +1,15 @@
+<launch>
+  <arg name="command_forwarding_enabled" default="false"/>
+  <arg name="mission_forwarding_enabled" default="false"/>
+  <arg name="camera_mode" default="ros_compressed"/>
+  <arg name="compressed_image_topic" default="/camera/color/image_raw/compressed"/>
+
+  <node pkg="mobile_gateway" type="mobile_gateway_node.py"
+        name="mobile_gateway" output="screen" required="true">
+    <rosparam command="load" file="$(find mobile_gateway)/config/mobile_gateway.yaml"/>
+    <param name="command_forwarding_enabled" value="$(arg command_forwarding_enabled)"/>
+    <param name="mission_forwarding_enabled" value="$(arg mission_forwarding_enabled)"/>
+    <param name="camera_mode" value="$(arg camera_mode)"/>
+    <param name="compressed_image_topic" value="$(arg compressed_image_topic)"/>
+  </node>
+</launch>

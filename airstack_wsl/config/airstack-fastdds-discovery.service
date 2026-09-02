@@ -1,0 +1,15 @@
+[Unit]
+Description=AirStack Fast DDS discovery server for Windows Isaac Sim
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Use the ROS Humble Fast DDS 2.6 binary. Ubuntu's /usr/bin copy is 2.5 and
+# silently fails to answer participants linked against ROS's 2.6 runtime.
+ExecStart=/home/airstack/AirStack/start_fastdds_discovery.sh
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

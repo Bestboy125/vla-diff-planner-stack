@@ -1,0 +1,17 @@
+depth_scale: 0.001
+min_depth: 0.15
+max_depth: 8.0
+depth_crop_fraction: 0.25
+max_inference_rate: 2.0
+sync_queue: 15
+sync_slop: 0.15
+standoff: 1.0
+camera_extrinsic_frame: camera_infra1_optical_frame
+calibration_source: "VINS-Fusion d435.yaml body_T_cam0 initial estimate; requires final hand-eye calibration"
+
+# T_body_camera0 (camera_infra1_optical_frame -> body/IMU), row-major.
+# Copied without modification from VINS-Fusion-gpu/config/d435.yaml.
+body_T_camera: [-0.0094905083816871, 0.01858555774959339, 0.9997822299349967, 0.1507507633428777,
+                -0.9999376788303664, 0.005702373625985403, -0.009597988871100195, 0.02746363808219958,
+                -0.005879515796153944, -0.9998110121308762, 0.018530281051203197, -0.07698699161712907,
+                0.0, 0.0, 0.0, 1.0]
