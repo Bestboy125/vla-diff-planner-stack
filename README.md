@@ -157,6 +157,98 @@ Simulation dependencies and simulator assets are not vendored. Refer to
 `isaac_sim_windows/` and `airstack_wsl/` for the local setup and validation
 scripts.
 
+## Jetson AGX Orin 64GB inference benchmark
+
+OpenVLA, π0, and π0.5 were deployed independently to a Jetson AGX Orin
+Developer Kit (64GB unified memory) and exercised through their native CUDA
+inference paths. This benchmark measures policy-call latency and board resource
+requirements; it does not measure task success, action quality, or flight
+safety.
+
+### Tested platform and model storage
+
+- JetPack 6.2.1 / L4T 36.4.7, Ubuntu 22.04, CUDA 12.6, MAXN power mode, and
+  `jetson_clocks` enabled during measurement.
+- A dedicated Python 3.10 Conda environment was created at
+  `/data/conda_envs/vla_bench` on the board's Samsung 970 EVO Plus SSD.
+- Model weights were copied to `/data/vla_benchmark/models`: OpenVLA 14.05 GiB,
+  π0 8.88 GiB, and π0.5 5.90 GiB. File counts and total byte counts matched the
+  source copies after transfer. Weights remain external and are not committed
+  to this repository.
+- Each test used batch size 1, bf16, a deterministic synthetic RGB observation,
+  a four-dimensional zero state, and the instruction `fly forward and avoid
+  obstacles`.
+- Results below contain 20 steady-state policy calls after model-specific
+  warmup. Each model ran in a separate process; `tegrastats` sampled system RAM,
+  GPU utilization, GPU_SOC power, and temperature during the steady-state
+  interval.
+
+### Native inference frameworks
+
+- **OpenVLA:** PyTorch 2.3.0 CUDA, Transformers 4.40.1, timm 0.9.10, bf16, and
+  PyTorch scaled-dot-product attention. The adapter checkpoint is loaded through
+  the project's OpenVLA inference path.
+- **π0:** OpenPI's native JAX/Flax CUDA path with its LoRA PaliGemma/action-expert
+  parameters active and 10 denoising steps. Because the checkpoint does not
+  record its original policy configuration, this run uses OpenPI's native
+  50-action-horizon default as an explicit benchmark assumption.
+- **π0.5:** OpenPI's native JAX/Flax CUDA path with LoRA active, 10 denoising
+  steps, and the checkpoint's explicit 10-action horizon.
+
+JAX's installation documentation supports Linux aarch64 CUDA wheels, but the
+generic JAX 0.5.3 CUDA plugin hit the known `RepeatBufferKernel` autotuning
+failure on Orin sm_87. The π benchmarks therefore used
+`--xla_gpu_autotune_level=0` and disabled Triton GEMM while retaining CUDA
+execution. Their measured latency should be treated as conservative for the
+stock wheel. See the corresponding
+[JAX issue](https://github.com/jax-ml/jax/issues/22723),
+[OpenPI AGX Orin report](https://github.com/Physical-Intelligence/openpi/issues/582),
+and [JAX installation documentation](https://github.com/jax-ml/jax/blob/main/docs/installation.md).
+
+### Timing results
+
+| Model | Load | Cold/JIT warmup | Mean | P50 | P95 | Policy calls/s | Output per call |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| OpenVLA | 10.354 s | 1.028 s first call | 575.110 ms | 574.699 ms | 577.981 ms | 1.739 | `[4]` |
+| π0 | 7.017 s | 9.000 s JIT | **498.115 ms** | **496.812 ms** | **502.333 ms** | **2.008** | `[50, 4]` |
+| π0.5 | **6.267 s** | 8.955 s JIT | 522.506 ms | 521.545 ms | 529.282 ms | 1.914 | `[10, 4]` |
+
+Policy-call rates are not per-action rates. OpenVLA returns one four-dimensional
+action, π0 returns a 50-by-4 action chunk under the native-default assumption,
+and π0.5 returns a 10-by-4 chunk. The online controller consumes action chunks
+according to its receding-horizon policy, so direct per-action throughput claims
+would be misleading.
+
+### Memory, utilization, and power
+
+| Model | Peak process RSS | Framework allocator peak | Steady system RAM | Mean GPU utilization | Mean GPU_SOC power | Peak GPU_SOC power |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| OpenVLA | 19.205 GiB | 14.428 GiB | 19,985.7 MB | 92.3% | 31.43 W | 34.17 W |
+| π0 | 17.472 GiB | **6.353 GiB** | **15,967.1 MB** | 93.4% | 33.32 W | 36.17 W |
+| π0.5 | **16.954 GiB** | 6.656 GiB | 16,661.4 MB | 85.1% | 33.10 W | 36.55 W |
+
+Jetson uses unified system memory. Process RSS, whole-system RAM from
+`tegrastats`, and framework allocator bytes describe different views of memory
+and must not be added together or interpreted as discrete-GPU VRAM. All three
+models completed the warmup and 20 measured calls with finite outputs, zero
+swap usage, and no out-of-memory errors.
+
+### Capability conclusions
+
+- The 64GB AGX Orin can run each model locally with useful memory headroom.
+  Keeping all three resident concurrently is not recommended because their
+  processes plus the operating system would approach the unified-memory limit
+  and compete for GPU resources.
+- π0 delivered the highest policy update rate: its 498.115 ms mean latency was
+  13.4% lower than OpenVLA. π0.5 was 9.1% lower than OpenVLA and had the lowest
+  observed process-RSS peak.
+- OpenVLA was stable and highly GPU-saturating, but its PyTorch allocator peak
+  was more than twice the JAX peaks observed for the two π models.
+- For this software stack, π0 is the best latency-first choice. π0.5 is the
+  preferable short-action-chunk option and had the smallest process footprint.
+  Model selection for flight still requires real observation/action replay,
+  closed-loop simulation, safety-bound validation, and staged vehicle tests.
+
 ## Verification
 
 Relevant checks include:
