@@ -48,6 +48,11 @@ class SemanticOrbitExecutor(object):
             "/semantic_raw_stereo_node/target_class_command", String, queue_size=1
         )
         self.status_pub = rospy.Publisher("~status", String, queue_size=10, latch=True)
+        # Observation-only trace topic.  It is deliberately not /goal; the
+        # atomic skill server remains the only publisher of executable points.
+        self.entry_world_pub = rospy.Publisher(
+            "~circle_entry_world", PointStamped, queue_size=1, latch=True
+        )
         rospy.Subscriber("~request", String, self.on_request, queue_size=1)
         rospy.Subscriber("~cancel", String, self.on_cancel, queue_size=1)
         rospy.Subscriber(
@@ -154,6 +159,12 @@ class SemanticOrbitExecutor(object):
                 spec = build_world_orbit_spec(request, target, current, self.max_approach_leg)
                 if not self.client.wait_for_server(rospy.Duration(0.25)):
                     raise SemanticOrbitError("atomic skill action server is unavailable")
+                entry_message = PointStamped()
+                entry_message.header.stamp = message.header.stamp
+                entry_message.header.frame_id = self.world_frame
+                (entry_message.point.x, entry_message.point.y,
+                 entry_message.point.z) = spec["entry_world"]
+                self.entry_world_pub.publish(entry_message)
                 goal = ExecuteAtomicSkillGoal()
                 goal.skill = "ORBIT"
                 goal.center.x, goal.center.y, goal.center.z = spec["center"]
@@ -175,6 +186,7 @@ class SemanticOrbitExecutor(object):
                     "atomic ORBIT accepted; its first waypoint is the 1.5 m circle entry",
                     request,
                     {"target_world": list(target), "orbit_center": list(spec["center"]),
+                     "circle_entry_world": list(spec["entry_world"]),
                      "approach_leg_m": spec["approach_leg_m"]},
                 )
             except SemanticOrbitError as exc:

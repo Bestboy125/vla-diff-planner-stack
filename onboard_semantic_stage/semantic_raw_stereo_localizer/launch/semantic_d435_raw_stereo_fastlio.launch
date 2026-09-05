@@ -6,6 +6,8 @@
   <arg name="planner_goal_topic" default="/goal"/>
   <arg name="odom_topic" default="/ekf/ekf_odom"/>
   <arg name="world_frame" default="world"/>
+  <arg name="body_frame" default="base_link"/>
+  <arg name="allow_empty_odom_child_frame" default="true"/>
   <arg name="target_class" default="person"/>
   <arg name="confidence" default="0.20"/>
   <arg name="depth_backend" default="sgbm"/>
@@ -34,6 +36,8 @@
     <arg name="planner_goal_topic" value="$(arg planner_goal_topic)"/>
     <arg name="odom_topic" value="$(arg odom_topic)"/>
     <arg name="world_frame" value="$(arg world_frame)"/>
+    <arg name="body_frame" value="$(arg body_frame)"/>
+    <arg name="allow_empty_odom_child_frame" value="$(arg allow_empty_odom_child_frame)"/>
     <arg name="target_class" value="$(arg target_class)"/>
     <arg name="confidence" value="$(arg confidence)"/>
     <arg name="depth_backend" value="$(arg depth_backend)"/>

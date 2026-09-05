@@ -279,6 +279,9 @@ class SemanticRawStereoNode(object):
         self.planner_goal_topic = gp("~planner_goal_topic", "/goal")
         self.world_frame = gp("~world_frame", "world")
         self.require_world_frame = bool(gp("~require_world_frame", True))
+        self.body_frame = gp("~body_frame", "base_link")
+        self.require_body_frame = bool(gp("~require_body_frame", True))
+        self.allow_empty_odom_child_frame = bool(gp("~allow_empty_odom_child_frame", False))
         self.target_class = gp("~target_class", "person")
         self.classes = gp("~classes", [self.target_class])
         self.confidence = float(gp("~confidence", 0.20))
@@ -466,6 +469,13 @@ class SemanticRawStereoNode(object):
         if self.require_world_frame and odom_message.header.frame_id != self.world_frame:
             raise ValueError("odometry frame %s does not match %s" %
                              (odom_message.header.frame_id, self.world_frame))
+        odom_child_frame = odom_message.child_frame_id.strip()
+        if self.require_body_frame:
+            if odom_child_frame and odom_child_frame != self.body_frame:
+                raise ValueError("odometry child frame %s does not match %s" %
+                                 (odom_child_frame, self.body_frame))
+            if not odom_child_frame and not self.allow_empty_odom_child_frame:
+                raise ValueError("odometry child frame is empty")
 
         left_raw = image_to_numpy(left_message)
         right_raw = image_to_numpy(right_message)
@@ -531,7 +541,7 @@ class SemanticRawStereoNode(object):
         target_camera_message.point.x, target_camera_message.point.y, target_camera_message.point.z = point_camera
         target_body_message = PointStamped()
         target_body_message.header.stamp = left_message.header.stamp
-        target_body_message.header.frame_id = odom_message.child_frame_id or "body"
+        target_body_message.header.frame_id = self.body_frame
         target_body_message.point.x, target_body_message.point.y, target_body_message.point.z = point_body
         target_world_message = PointStamped()
         target_world_message.header.stamp = left_message.header.stamp
@@ -606,6 +616,7 @@ class SemanticRawStereoNode(object):
             "median_epipolar_error_px": result.get("median_epipolar_error_px"),
             "sensor_skew_s": sensor_skew, "target_left_camera": point_camera.tolist(),
             "target_body": point_body.tolist(), "target_world": point_world.tolist(),
+            "body_frame": self.body_frame, "world_frame": self.world_frame,
             "goal_candidate": None if goal is None else goal.tolist(),
             "stable_observations": len(self.target_history),
             "target_jitter_m": jitter, "stable_goal_available": stable,

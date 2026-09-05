@@ -68,6 +68,8 @@ geometric center.
 - body/world targets: `/semantic_raw_stereo_node/target_body`, `target_world`
 - stable candidate: `/semantic_raw_stereo_node/stable_goal_candidate`
 - stable target center: `/semantic_raw_stereo_node/stable_target_world`
+- validated world-frame circle entry (trace only, never a control goal):
+  `/semantic_orbit_executor/circle_entry_world`
 - runtime target-class command/status: `/semantic_raw_stereo_node/target_class_command`,
   `/semantic_raw_stereo_node/target_class_status`
 - one-shot commit service: `/semantic_raw_stereo_node/send_goal`
@@ -89,6 +91,20 @@ Diff-Planner remains the only path-planning layer. The semantic localizer's own
 direct `/goal` output stays disabled. Both the bridge and semantic-orbit executor
 must have their independent live gates enabled, and the executor requires an
 already connected, armed vehicle with fresh odometry. It never arms or takes off.
+
+The frame chain is explicit: `p_body = body_T_left_camera * p_camera`, then
+`p_world = world_R_body * p_body + world_t_body`, using the synchronized odometry
+pose whose header is `world` and child is `base_link`. The circle centre, its
+nearest entry point and every sampled orbit waypoint are consequently world-frame
+coordinates. For one complete lap the final sampled waypoint returns to that same
+world-frame entry point. A frame mismatch is rejected before the atomic action is
+sent.
+
+The installed `ekf_lidar` publisher currently leaves `Odometry.child_frame_id`
+empty even though its pose is the aircraft body pose. The launch file therefore
+enables the explicit `allow_empty_odom_child_frame` compatibility switch and labels
+that pose as the configured `base_link`; a non-empty, different child frame is
+still rejected.
 
 The combined D435 launch keeps the new gate closed by default:
 

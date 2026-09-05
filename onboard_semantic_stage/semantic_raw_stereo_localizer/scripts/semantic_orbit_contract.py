@@ -49,7 +49,18 @@ def build_world_orbit_spec(request, target_world, current_position, max_approach
         raise SemanticOrbitError("target and current position must contain three finite values")
     tx, ty, _target_z, x, y, z = values
     horizontal_distance = math.hypot(x - tx, y - ty)
-    approach_leg = abs(horizontal_distance - request["radius_m"])
+    if horizontal_distance <= 1e-6:
+        raise SemanticOrbitError("circle entry direction is undefined at the target center")
+    # Both inputs are already in the odometry world frame.  The entry point is
+    # therefore generated in that same frame on the ray from the target centre
+    # towards the current vehicle position.  No body-frame delta is published.
+    radius = request["radius_m"]
+    entry_world = (
+        tx + radius * (x - tx) / horizontal_distance,
+        ty + radius * (y - ty) / horizontal_distance,
+        z,
+    )
+    approach_leg = math.hypot(x - entry_world[0], y - entry_world[1])
     if approach_leg > float(max_approach_leg_m):
         raise SemanticOrbitError(
             "circle entry is %.3f m away, above the %.3f m approach limit"
@@ -57,7 +68,8 @@ def build_world_orbit_spec(request, target_world, current_position, max_approach
         )
     return {
         "center": (tx, ty, z),
-        "radius_m": request["radius_m"],
+        "entry_world": entry_world,
+        "radius_m": radius,
         "orbit_angle_rad": 2.0 * math.pi * request["laps"],
         "direction": "cw" if request["direction"] == "clockwise" else "ccw",
         "yaw_mode": request["yaw_mode"],

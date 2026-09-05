@@ -9,6 +9,9 @@
   <arg name="right_info_topic" default="/camera/infra2/camera_info"/>
   <arg name="odom_topic" default="/ekf/ekf_odom"/>
   <arg name="world_frame" default="world"/>
+  <arg name="body_frame" default="base_link"/>
+  <!-- ekf_lidar currently leaves Odometry.child_frame_id empty. -->
+  <arg name="allow_empty_odom_child_frame" default="true"/>
   <arg name="target_class" default="person"/>
   <arg name="weights" default="$(env HOME)/models/yolo_world/yolov8s-worldv2.pt"/>
   <arg name="confidence" default="0.20"/>
@@ -28,6 +31,8 @@
     <param name="right_info_topic" value="$(arg right_info_topic)"/>
     <param name="odom_topic" value="$(arg odom_topic)"/>
     <param name="world_frame" value="$(arg world_frame)"/>
+    <param name="body_frame" value="$(arg body_frame)"/>
+    <param name="allow_empty_odom_child_frame" value="$(arg allow_empty_odom_child_frame)"/>
     <param name="target_class" value="$(arg target_class)"/>
     <rosparam param="classes" subst_value="true">["$(arg target_class)"]</rosparam>
     <param name="weights" value="$(arg weights)"/>
