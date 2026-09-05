@@ -1,0 +1,39 @@
+<launch>
+  <!-- Safe default: perception runs and publishes candidates, but never /goal. -->
+  <arg name="start_camera" default="true"/>
+  <arg name="execution_enabled" default="false"/>
+  <arg name="publish_planner_goal" default="false"/>
+  <arg name="auto_publish_stable_goal" default="false"/>
+  <arg name="planner_goal_topic" default="/goal"/>
+  <arg name="target_class" default="person"/>
+  <arg name="confidence" default="0.25"/>
+  <arg name="odom_topic" default="/ekf/ekf_odom"/>
+  <arg name="world_frame" default="world"/>
+  <arg name="weights" default="/home/nv/models/yolo_world/yolov8s-worldv2.pt"/>
+
+  <group if="$(arg start_camera)">
+    <include file="$(find realsense2_camera)/launch/rs_camera.launch">
+      <arg name="enable_color" value="true"/>
+      <arg name="enable_depth" value="true"/>
+      <arg name="align_depth" value="true"/>
+      <arg name="color_width" value="640"/>
+      <arg name="color_height" value="480"/>
+      <arg name="color_fps" value="30"/>
+      <arg name="depth_width" value="640"/>
+      <arg name="depth_height" value="480"/>
+      <arg name="depth_fps" value="30"/>
+    </include>
+  </group>
+
+  <include file="$(find semantic_3d_localizer)/launch/semantic_target_real.launch">
+    <arg name="execution_enabled" value="$(arg execution_enabled)"/>
+    <arg name="publish_planner_goal" value="$(arg publish_planner_goal)"/>
+    <arg name="auto_publish_stable_goal" value="$(arg auto_publish_stable_goal)"/>
+    <arg name="planner_goal_topic" value="$(arg planner_goal_topic)"/>
+    <arg name="target_class" value="$(arg target_class)"/>
+    <arg name="confidence" value="$(arg confidence)"/>
+    <arg name="odom_topic" value="$(arg odom_topic)"/>
+    <arg name="world_frame" value="$(arg world_frame)"/>
+    <arg name="weights" value="$(arg weights)"/>
+  </include>
+</launch>

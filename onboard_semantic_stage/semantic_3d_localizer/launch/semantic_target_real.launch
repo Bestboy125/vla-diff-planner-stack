@@ -4,11 +4,13 @@
   <arg name="image_topic" default="/camera/color/image_raw"/>
   <arg name="depth_topic" default="/camera/aligned_depth_to_color/image_raw"/>
   <arg name="camera_info_topic" default="/camera/aligned_depth_to_color/camera_info"/>
-  <arg name="odom_topic" default="/mavros/local_position/odom"/>
-  <arg name="world_frame" default="map"/>
+  <arg name="odom_topic" default="/ekf/ekf_odom"/>
+  <arg name="world_frame" default="world"/>
   <arg name="target_class" default="person"/>
   <arg name="weights" default="$(env HOME)/models/yolo_world/yolov8s-worldv2.pt"/>
   <arg name="confidence" default="0.25"/>
+  <arg name="auto_publish_stable_goal" default="false"/>
+  <arg name="planner_goal_topic" default="/goal"/>
   <arg name="debug_bbox" default="[]"/>
   <node pkg="semantic_3d_localizer" type="semantic_target_node.py"
         name="semantic_target_node" output="screen">
@@ -21,9 +23,11 @@
     <param name="odom_topic" value="$(arg odom_topic)"/>
     <param name="world_frame" value="$(arg world_frame)"/>
     <param name="target_class" value="$(arg target_class)"/>
-    <rosparam param="classes">[$(arg target_class)]</rosparam>
+    <rosparam param="classes" subst_value="true">["$(arg target_class)"]</rosparam>
     <param name="weights" value="$(arg weights)"/>
     <param name="confidence" value="$(arg confidence)"/>
+    <param name="auto_publish_stable_goal" value="$(arg auto_publish_stable_goal)"/>
+    <param name="planner_goal_topic" value="$(arg planner_goal_topic)"/>
     <rosparam param="debug_bbox" subst_value="true">$(arg debug_bbox)</rosparam>
   </node>
 </launch>

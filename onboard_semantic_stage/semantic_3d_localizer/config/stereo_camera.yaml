@@ -5,7 +5,15 @@ depth_crop_fraction: 0.25
 max_inference_rate: 2.0
 sync_queue: 15
 sync_slop: 0.15
+max_sensor_skew: 0.30
+max_depth_mad: 0.40
+min_stable_observations: 4
+max_target_jitter: 0.35
+stable_timeout: 1.5
+auto_publish_stable_goal: false
 standoff: 1.0
+keep_body_altitude: true
+require_world_frame: true
 camera_extrinsic_frame: camera_infra1_optical_frame
 calibration_source: "VINS-Fusion d435.yaml body_T_cam0 initial estimate; requires final hand-eye calibration"
 

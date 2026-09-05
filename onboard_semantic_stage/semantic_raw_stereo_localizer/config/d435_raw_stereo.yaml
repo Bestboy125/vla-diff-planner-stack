@@ -1,0 +1,40 @@
+# This package never subscribes to a RealSense depth image.
+depth_backend: sgbm
+min_depth: 0.35
+max_depth: 6.0
+min_disparity_px: 1.0
+max_epipolar_error_px: 1.5
+match_ratio: 0.75
+min_matches: 8
+max_features: 2500
+bbox_mask_shrink: 0.08
+depth_mad_scale: 3.5
+max_depth_mad: 0.50
+bbox_depth_shrink: 0.25
+min_dense_pixels: 150
+sgbm_num_disparities: 64
+sgbm_block_size: 5
+sgbm_uniqueness_ratio: 8
+sgbm_speckle_window_size: 60
+sgbm_speckle_range: 2
+max_sensor_skew: 0.10
+sync_queue: 20
+sync_slop: 0.05
+max_inference_rate: 2.0
+
+standoff: 1.0
+keep_body_altitude: true
+require_world_frame: true
+min_stable_observations: 4
+max_target_jitter: 0.35
+stable_timeout: 1.5
+auto_publish_stable_goal: false
+
+camera_extrinsic_frame: camera_infra1_optical_frame
+calibration_source: "VINS-Fusion d435.yaml body_T_cam0 initial estimate; requires final hand-eye calibration"
+
+# T_body_infra1: rectified left infrared optical frame -> body/IMU, row-major.
+body_T_left_camera: [-0.0094905083816871, 0.01858555774959339, 0.9997822299349967, 0.1507507633428777,
+                     -0.9999376788303664, 0.005702373625985403, -0.009597988871100195, 0.02746363808219958,
+                     -0.005879515796153944, -0.9998110121308762, 0.018530281051203197, -0.07698699161712907,
+                     0.0, 0.0, 0.0, 1.0]

@@ -42,15 +42,26 @@ def quaternion_matrix(q):
 
 def camera_to_world(point_camera, body_position, body_quaternion,
                     rotation_body_camera, translation_body_camera):
-    point_body = add(mat_vec(rotation_body_camera, point_camera), translation_body_camera)
+    point_body = camera_to_body(point_camera, rotation_body_camera, translation_body_camera)
+    return body_to_world(point_body, body_position, body_quaternion)
+
+
+def camera_to_body(point_camera, rotation_body_camera, translation_body_camera):
+    """Transform a point from the calibrated optical frame into the body frame."""
+    return add(mat_vec(rotation_body_camera, point_camera), translation_body_camera)
+
+
+def body_to_world(point_body, body_position, body_quaternion):
+    """Transform a body-frame point using the time-aligned odometry pose."""
     return add(mat_vec(quaternion_matrix(body_quaternion), point_body), body_position)
 
 
-def standoff_goal(body_position, target_world, distance):
+def standoff_goal(body_position, target_world, distance, keep_body_altitude=True):
     dx = target_world[0] - body_position[0]
     dy = target_world[1] - body_position[1]
     planar = math.hypot(dx, dy)
     if planar <= distance:
         raise ValueError("target is nearer than requested standoff")
     scale = (planar - distance) / planar
-    return (body_position[0] + dx*scale, body_position[1] + dy*scale, target_world[2])
+    goal_z = body_position[2] if keep_body_altitude else target_world[2]
+    return (body_position[0] + dx*scale, body_position[1] + dy*scale, goal_z)

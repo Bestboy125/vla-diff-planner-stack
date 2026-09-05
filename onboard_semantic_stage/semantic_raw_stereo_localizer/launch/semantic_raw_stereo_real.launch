@@ -1,0 +1,38 @@
+<launch>
+  <arg name="execution_enabled" default="false"/>
+  <arg name="publish_planner_goal" default="false"/>
+  <arg name="auto_publish_stable_goal" default="false"/>
+  <arg name="planner_goal_topic" default="/goal"/>
+  <arg name="left_topic" default="/camera/infra1/image_rect_raw"/>
+  <arg name="right_topic" default="/camera/infra2/image_rect_raw"/>
+  <arg name="left_info_topic" default="/camera/infra1/camera_info"/>
+  <arg name="right_info_topic" default="/camera/infra2/camera_info"/>
+  <arg name="odom_topic" default="/ekf/ekf_odom"/>
+  <arg name="world_frame" default="world"/>
+  <arg name="target_class" default="person"/>
+  <arg name="weights" default="$(env HOME)/models/yolo_world/yolov8s-worldv2.pt"/>
+  <arg name="confidence" default="0.20"/>
+  <arg name="depth_backend" default="sgbm"/>
+  <arg name="debug_bbox" default="[]"/>
+
+  <node pkg="semantic_raw_stereo_localizer" type="semantic_raw_stereo_node.py"
+        name="semantic_raw_stereo_node" output="screen">
+    <rosparam command="load" file="$(find semantic_raw_stereo_localizer)/config/d435_raw_stereo.yaml"/>
+    <param name="execution_enabled" value="$(arg execution_enabled)"/>
+    <param name="publish_planner_goal" value="$(arg publish_planner_goal)"/>
+    <param name="auto_publish_stable_goal" value="$(arg auto_publish_stable_goal)"/>
+    <param name="planner_goal_topic" value="$(arg planner_goal_topic)"/>
+    <param name="left_topic" value="$(arg left_topic)"/>
+    <param name="right_topic" value="$(arg right_topic)"/>
+    <param name="left_info_topic" value="$(arg left_info_topic)"/>
+    <param name="right_info_topic" value="$(arg right_info_topic)"/>
+    <param name="odom_topic" value="$(arg odom_topic)"/>
+    <param name="world_frame" value="$(arg world_frame)"/>
+    <param name="target_class" value="$(arg target_class)"/>
+    <rosparam param="classes" subst_value="true">["$(arg target_class)"]</rosparam>
+    <param name="weights" value="$(arg weights)"/>
+    <param name="confidence" value="$(arg confidence)"/>
+    <param name="depth_backend" value="$(arg depth_backend)"/>
+    <rosparam param="debug_bbox" subst_value="true">$(arg debug_bbox)</rosparam>
+  </node>
+</launch>
