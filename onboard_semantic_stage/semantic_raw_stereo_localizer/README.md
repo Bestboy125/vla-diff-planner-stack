@@ -97,6 +97,10 @@ roslaunch semantic_raw_stereo_localizer semantic_d435_raw_stereo_fastlio.launch 
   semantic_orbit_execution_enabled:=false
 ```
 
+If another validated driver already owns the D435 and publishes all four raw
+stereo image/CameraInfo topics, add `start_realsense:=false` to avoid starting a
+second RealSense node.
+
 Safe candidate-only launch when the D435 driver and EKF are already running:
 
 ```bash

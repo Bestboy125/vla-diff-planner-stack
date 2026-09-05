@@ -10,19 +10,22 @@
   <arg name="confidence" default="0.20"/>
   <arg name="depth_backend" default="sgbm"/>
   <arg name="semantic_orbit_execution_enabled" default="false"/>
+  <arg name="start_realsense" default="true"/>
 
-  <include file="$(find realsense2_camera)/launch/rs_camera.launch">
-    <arg name="enable_color" value="false"/>
-    <arg name="enable_depth" value="false"/>
-    <arg name="enable_infra" value="true"/>
-    <arg name="enable_infra1" value="true"/>
-    <arg name="enable_infra2" value="true"/>
-    <arg name="infra_width" value="640"/>
-    <arg name="infra_height" value="480"/>
-    <arg name="infra_fps" value="15"/>
-    <arg name="enable_sync" value="true"/>
-    <arg name="align_depth" value="false"/>
-  </include>
+  <group if="$(arg start_realsense)">
+    <include file="$(find realsense2_camera)/launch/rs_camera.launch">
+      <arg name="enable_color" value="false"/>
+      <arg name="enable_depth" value="false"/>
+      <arg name="enable_infra" value="true"/>
+      <arg name="enable_infra1" value="true"/>
+      <arg name="enable_infra2" value="true"/>
+      <arg name="infra_width" value="640"/>
+      <arg name="infra_height" value="480"/>
+      <arg name="infra_fps" value="15"/>
+      <arg name="enable_sync" value="true"/>
+      <arg name="align_depth" value="false"/>
+    </include>
+  </group>
 
   <include file="$(find semantic_raw_stereo_localizer)/launch/semantic_raw_stereo_real.launch">
     <arg name="execution_enabled" value="$(arg execution_enabled)"/>
