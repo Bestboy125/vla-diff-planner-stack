@@ -14,11 +14,30 @@ SuperPoint/LightGlue source and weights are not copied because its
 Because the current D435 supplies synchronized rectified views, the default
 backend is an independent OpenCV SGBM disparity computation over those raw
 views, followed by a centre-of-box ROI and depth-MAD filtering. It does not use
-the D435 depth image. An `orb` backend is retained for sparse feature matching;
-it uses bidirectional mutual ratio checks, a box-centred coherent feature
-cluster, positive-disparity triangulation, and depth-MAD filtering. Select it
-with `depth_backend:=orb`. A separately installed learned matcher can be added
-later without changing ROS topics.
+the D435 depth image. A learned `lightglue` backend follows the reference
+pipeline while avoiding redistribution of its restricted SuperPoint files:
+DISK features, LightGlue matching, target-box and fundamental-matrix filtering,
+a box-centred coherent feature cluster, positive-disparity triangulation, and
+near-depth foreground clustering plus depth-MAD filtering. The near-depth
+cluster must independently satisfy `min_matches`, preventing a few spurious
+close matches from winning. Optional LK forward/backward sub-pixel refinement
+is available but disabled by default: on the tested infrared scene it followed
+background texture through holes in the detected chair. An `orb` backend
+retains the same geometric path with classical descriptors. Select either with
+`depth_backend:=lightglue` or `depth_backend:=orb`.
+
+The sparse learned backend is primarily an experimental/reference path. At
+roughly 2.3 m the connected D435 has only about 8--9 pixels of disparity, so a
+one-pixel sparse-keypoint error creates decimetre-scale depth error. Keep
+`depth_backend:=sgbm` for the current flight configuration unless a wider
+baseline or a validated sub-pixel matcher is introduced.
+
+The learned backend requires external runtime packages and official model
+weights; neither model source nor weights are committed here:
+
+```bash
+python3 -m pip install --user kornia==0.7.2 kornia_rs
+```
 
 This is true stereo inference from the two current D435 views. It does **not**
 sample, align, or repackage `/camera/depth/*`; the driver-provided projection

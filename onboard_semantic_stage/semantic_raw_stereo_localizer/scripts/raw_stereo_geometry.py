@@ -64,7 +64,8 @@ def validate_projection_matrices(left_projection, right_projection):
 def triangulate_rectified(points_left, points_right, left_projection, right_projection,
                           min_disparity_px=1.0, max_epipolar_error_px=1.5,
                           min_depth=0.35, max_depth=6.0, mad_scale=3.5,
-                          max_depth_mad=0.50):
+                          max_depth_mad=0.50, prefer_near_cluster=False,
+                          min_cluster_points=4, depth_cluster_gap=0.25):
     left, right, baseline = validate_projection_matrices(left_projection, right_projection)
     points_left = np.asarray(points_left, dtype=np.float64).reshape(-1, 2)
     points_right = np.asarray(points_right, dtype=np.float64).reshape(-1, 2)
@@ -92,6 +93,22 @@ def triangulate_rectified(points_left, points_right, left_projection, right_proj
     if len(xyz) < 2:
         raise ValueError("no triangulated points in the configured depth range")
 
+    depth_cluster_size = len(xyz)
+    if prefer_near_cluster:
+        order = np.argsort(xyz[:, 2])
+        sorted_depth = xyz[order, 2]
+        split_after = np.where(
+            np.diff(sorted_depth) > np.maximum(
+                float(depth_cluster_gap), 0.06 * sorted_depth[:-1]))[0]
+        clusters = np.split(order, split_after + 1)
+        clusters = [cluster for cluster in clusters if len(cluster) >= int(min_cluster_points)]
+        if not clusters:
+            raise ValueError("no coherent near-depth cluster has enough stereo points")
+        selected = clusters[0]
+        xyz, points_left = xyz[selected], points_left[selected]
+        epipolar_error = epipolar_error[selected]
+        depth_cluster_size = len(selected)
+
     depth_median = float(np.median(xyz[:, 2]))
     depth_mad = float(np.median(np.abs(xyz[:, 2] - depth_median)))
     if depth_mad > max_depth_mad:
@@ -108,6 +125,7 @@ def triangulate_rectified(points_left, points_right, left_projection, right_proj
         "depth_m": depth_median,
         "depth_mad_m": depth_mad,
         "baseline_m": abs(float(baseline)),
+        "depth_cluster_size": int(depth_cluster_size),
         "median_epipolar_error_px": float(np.median(epipolar_error)),
     }
 

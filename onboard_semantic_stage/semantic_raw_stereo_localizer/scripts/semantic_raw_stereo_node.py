@@ -99,6 +99,110 @@ class OrbStereoMatcher(object):
         return points_left, points_right
 
 
+class DiskLightGlueStereoMatcher(object):
+    """Learned two-view correspondence without vendoring restricted SuperPoint code."""
+    def __init__(self, device, max_features, confidence, bbox_shrink,
+                 lk_refine, lk_window, lk_max_fb_error):
+        try:
+            import torch
+            from kornia.feature import DISK, LightGlue
+        except ImportError as exc:
+            raise RuntimeError(
+                "lightglue backend requires kornia==0.7.2 and kornia_rs") from exc
+        self.torch = torch
+        if str(device).isdigit():
+            device = "cuda:%s" % device
+        self.device = torch.device(device if torch.cuda.is_available() else "cpu")
+        self.extractor = DISK.from_pretrained("depth", device=self.device).eval()
+        self.matcher = LightGlue(features="disk").eval().to(self.device)
+        self.max_features = int(max_features)
+        self.confidence = float(confidence)
+        self.bbox_shrink = float(bbox_shrink)
+        self.lk_refine = bool(lk_refine)
+        self.lk_window = int(lk_window)
+        self.lk_max_fb_error = float(lk_max_fb_error)
+
+    def _refine_subpixel(self, left, right, points_left, points_right):
+        if not self.lk_refine or not len(points_left):
+            return points_left, points_right
+        left_gray = cv2.cvtColor(left, cv2.COLOR_BGR2GRAY) if left.ndim == 3 else left
+        right_gray = cv2.cvtColor(right, cv2.COLOR_BGR2GRAY) if right.ndim == 3 else right
+        left_cv = points_left.astype(np.float32).reshape(-1, 1, 2)
+        right_initial = points_right.astype(np.float32).reshape(-1, 1, 2)
+        criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01)
+        window = (self.lk_window, self.lk_window)
+        right_refined, status_forward, _error_forward = cv2.calcOpticalFlowPyrLK(
+            left_gray, right_gray, left_cv, right_initial.copy(), winSize=window,
+            maxLevel=2, criteria=criteria, flags=cv2.OPTFLOW_USE_INITIAL_FLOW)
+        left_reprojected, status_backward, _error_backward = cv2.calcOpticalFlowPyrLK(
+            right_gray, left_gray, right_refined, left_cv.copy(), winSize=window,
+            maxLevel=2, criteria=criteria, flags=cv2.OPTFLOW_USE_INITIAL_FLOW)
+        forward_ok = status_forward.reshape(-1).astype(bool)
+        backward_ok = status_backward.reshape(-1).astype(bool)
+        fb_error = np.linalg.norm(left_reprojected.reshape(-1, 2) - points_left, axis=1)
+        keep = forward_ok & backward_ok & np.isfinite(fb_error)
+        keep &= fb_error <= self.lk_max_fb_error
+        refined = right_refined.reshape(-1, 2)
+        # The D435 inputs are rectified; retain only the refined horizontal coordinate.
+        refined[:, 1] = points_left[:, 1]
+        return points_left[keep], refined[keep].astype(np.float64)
+
+    def _extract(self, image):
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+        tensor = self.torch.from_numpy(np.ascontiguousarray(gray)).to(
+            device=self.device, dtype=self.torch.float32)
+        tensor = tensor[None, None].repeat(1, 3, 1, 1) / 255.0
+        with self.torch.inference_mode():
+            return self.extractor(
+                tensor, n=self.max_features, pad_if_not_divisible=True)[0]
+
+    def match(self, left, right, bbox):
+        left_features = self._extract(left)
+        right_features = self._extract(right)
+        height, width = left.shape[:2]
+
+        def data(features):
+            return {
+                "keypoints": features.keypoints[None],
+                "descriptors": features.descriptors[None],
+                "image_size": self.torch.tensor(
+                    [[width, height]], device=self.device, dtype=self.torch.float32),
+            }
+
+        with self.torch.inference_mode():
+            result = self.matcher({
+                "image0": data(left_features), "image1": data(right_features)})
+        match_index = result["matches0"][0]
+        match_score = result["matching_scores0"][0]
+        valid = (match_index >= 0) & (match_score >= self.confidence)
+        left_indices = self.torch.where(valid)[0]
+        right_indices = match_index[valid]
+        points_left = left_features.keypoints[left_indices].detach().cpu().numpy()
+        points_right = right_features.keypoints[right_indices].detach().cpu().numpy()
+
+        x1, y1, x2, y2 = [float(value) for value in bbox]
+        margin_x = self.bbox_shrink * max(0.0, x2 - x1)
+        margin_y = self.bbox_shrink * max(0.0, y2 - y1)
+        keep = ((points_left[:, 0] >= x1 + margin_x) &
+                (points_left[:, 0] <= x2 - margin_x) &
+                (points_left[:, 1] >= y1 + margin_y) &
+                (points_left[:, 1] <= y2 - margin_y))
+        points_left, points_right = points_left[keep], points_right[keep]
+        if len(points_left) < 4:
+            raise ValueError("DISK/LightGlue found fewer than four target-box matches")
+        points_left, points_right = self._refine_subpixel(
+            left, right, points_left, points_right)
+        if len(points_left) < 4:
+            raise ValueError("LK forward/backward refinement retained fewer than four matches")
+        if len(points_left) >= 8:
+            _fundamental, mask = cv2.findFundamentalMat(
+                points_left, points_right, cv2.FM_RANSAC, 1.5, 0.995)
+            if mask is not None:
+                keep = mask.reshape(-1).astype(bool)
+                points_left, points_right = points_left[keep], points_right[keep]
+        return points_left.astype(np.float64), points_right.astype(np.float64)
+
+
 class SgbmStereoDepth(object):
     """Independent dense disparity from the two rectified infrared images."""
     def __init__(self, num_disparities, block_size, uniqueness_ratio,
@@ -180,8 +284,8 @@ class SemanticRawStereoNode(object):
         self.device = gp("~device", 0)
         self.debug_bbox = gp("~debug_bbox", [])
         self.depth_backend = gp("~depth_backend", "sgbm").lower()
-        if self.depth_backend not in ("sgbm", "orb"):
-            raise ValueError("~depth_backend must be sgbm or orb")
+        if self.depth_backend not in ("sgbm", "orb", "lightglue"):
+            raise ValueError("~depth_backend must be sgbm, orb or lightglue")
         self.min_matches = int(gp("~min_matches", 8))
         self.max_sensor_skew = float(gp("~max_sensor_skew", 0.10))
         self.max_rate = float(gp("~max_inference_rate", 2.0))
@@ -191,6 +295,7 @@ class SemanticRawStereoNode(object):
         self.max_epipolar_error = float(gp("~max_epipolar_error_px", 1.5))
         self.depth_mad_scale = float(gp("~depth_mad_scale", 3.5))
         self.max_depth_mad = float(gp("~max_depth_mad", 0.50))
+        self.sparse_depth_cluster_gap = float(gp("~sparse_depth_cluster_gap", 0.25))
         self.standoff = float(gp("~standoff", 1.0))
         self.keep_body_altitude = bool(gp("~keep_body_altitude", True))
         self.min_stable_observations = max(1, int(gp("~min_stable_observations", 4)))
@@ -210,6 +315,16 @@ class SemanticRawStereoNode(object):
         self.stereo_matcher = OrbStereoMatcher(
             gp("~max_features", 2500), gp("~match_ratio", 0.75),
             gp("~bbox_mask_shrink", 0.08))
+        self.lightglue_matcher = None
+        if self.depth_backend == "lightglue":
+            self.lightglue_matcher = DiskLightGlueStereoMatcher(
+                gp("~lightglue_device", self.device),
+                gp("~lightglue_max_features", 1024),
+                gp("~lightglue_confidence", 0.10),
+                gp("~bbox_mask_shrink", 0.08),
+                gp("~lightglue_lk_refine", False),
+                gp("~lightglue_lk_window", 15),
+                gp("~lightglue_lk_max_fb_error", 0.75))
         self.sgbm = SgbmStereoDepth(
             gp("~sgbm_num_disparities", 64), gp("~sgbm_block_size", 5),
             gp("~sgbm_uniqueness_ratio", 8), gp("~sgbm_speckle_window_size", 60),
@@ -345,7 +460,9 @@ class SemanticRawStereoNode(object):
                 self.min_disparity, self.min_depth, self.max_depth,
                 self.depth_mad_scale, self.max_depth_mad)
         else:
-            points_left, points_right = self.stereo_matcher.match(left_raw, right_raw, bbox)
+            matcher = (self.lightglue_matcher if self.depth_backend == "lightglue"
+                       else self.stereo_matcher)
+            points_left, points_right = matcher.match(left_raw, right_raw, bbox)
             if len(points_left) < self.min_matches:
                 raise ValueError("stereo descriptor matches %d < %d" %
                                  (len(points_left), self.min_matches))
@@ -360,7 +477,9 @@ class SemanticRawStereoNode(object):
                 min_disparity_px=self.min_disparity,
                 max_epipolar_error_px=self.max_epipolar_error,
                 min_depth=self.min_depth, max_depth=self.max_depth,
-                mad_scale=self.depth_mad_scale, max_depth_mad=self.max_depth_mad)
+                mad_scale=self.depth_mad_scale, max_depth_mad=self.max_depth_mad,
+                prefer_near_cluster=True, min_cluster_points=self.min_matches,
+                depth_cluster_gap=self.sparse_depth_cluster_gap)
             inliers = len(result["points_left_camera"])
             if inliers < self.min_matches:
                 raise ValueError("triangulated stereo inliers %d < %d" %
@@ -443,6 +562,7 @@ class SemanticRawStereoNode(object):
             "depth_mad_m": result["depth_mad_m"], "baseline_m": result["baseline_m"],
             "descriptor_matches": descriptor_matches,
             "target_cluster_matches": cluster_matches, "triangulated_inliers": inliers,
+            "depth_cluster_size": result.get("depth_cluster_size"),
             "dense_valid_pixels": result.get("dense_valid_pixels"),
             "median_disparity_px": result.get("median_disparity_px"),
             "median_epipolar_error_px": result.get("median_epipolar_error_px"),

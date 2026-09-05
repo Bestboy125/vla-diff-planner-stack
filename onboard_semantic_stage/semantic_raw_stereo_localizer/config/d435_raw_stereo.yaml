@@ -10,6 +10,7 @@ max_features: 2500
 bbox_mask_shrink: 0.08
 depth_mad_scale: 3.5
 max_depth_mad: 0.50
+sparse_depth_cluster_gap: 0.40
 bbox_depth_shrink: 0.25
 min_dense_pixels: 150
 sgbm_num_disparities: 64
@@ -17,6 +18,12 @@ sgbm_block_size: 5
 sgbm_uniqueness_ratio: 8
 sgbm_speckle_window_size: 60
 sgbm_speckle_range: 2
+lightglue_device: "cuda:0"
+lightglue_max_features: 1024
+lightglue_confidence: 0.10
+lightglue_lk_refine: false
+lightglue_lk_window: 15
+lightglue_lk_max_fb_error: 0.75
 max_sensor_skew: 0.10
 sync_queue: 20
 sync_slop: 0.05
