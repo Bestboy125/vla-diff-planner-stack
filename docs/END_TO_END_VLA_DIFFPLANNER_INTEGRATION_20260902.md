@@ -75,13 +75,13 @@ FastAPI 是唯一控制面入口，职责包括：
 
 `onboard_observation_uplink_node.py` 订阅：
 
-- `/camera/color/image_raw/compressed`，或回退到 raw 图像后编码 JPEG；
-- `/camera/color/camera_info`；
+- `/vla_usb_camera/image_raw/compressed`，或回退到 raw 图像后编码 JPEG；
+- `/vla_usb_camera/camera_info`；
 - `/ekf/ekf_odom`；
-- `base_link ← camera_color_optical_frame` TF；
+- `base_link ← vla_usb_camera_optical_frame` TF；
 - 可选的 `/vla/optimized_trajectory_preview`。
 
-相机回调只把最新数据放入容量为 2 的覆盖队列。HTTP 变慢时丢弃旧帧，不反压 RealSense
+相机回调只把最新数据放入容量为 2 的覆盖队列。HTTP 变慢时丢弃旧帧，不反压 USB 相机
 图像流。工作线程组装 `onboard_observation` JSON，通过
 `POST /api/onboard/observations` 上传，并在 `X-Observation-Token` 中携带认证信息。
 
@@ -90,7 +90,7 @@ FastAPI 是唯一控制面入口，职责包括：
 - `sequence` 单调递增；
 - 图像时间距主机当前时间不超过 750 ms，未来偏差不超过 1000 ms；
 - 图像与 odom 时间差不超过 80 ms；
-- `world / base_link / camera_color_optical_frame` 与主机配置一致；
+- `world / base_link / vla_usb_camera_optical_frame` 与主机配置一致；
 - 四元数归一化，JPEG 首尾完整；
 - CameraInfo、外参和 `calibration_id` 已人工确认且两端一致。
 
@@ -124,7 +124,7 @@ chunk 时只取第一步执行或预览，剩余 chunk 不跨感知周期盲目�
 
 - `world`：FAST-LIO/EKF 和 Diff-Planner 共用的右手、Z 向上的局部世界系；
 - `base_link`：ROS FLU，X 前、Y 左、Z 上；
-- `camera_color_optical_frame`：X 右、Y 下、Z 前；
+- `vla_usb_camera_optical_frame`：X 右、Y 下、Z 前；
 - 图像动作语义：`[dx_body, dy_body, dz_body, d_yaw]`，单位 `[m,m,m,rad]`。
 
 主机利用最新位姿的 yaw 将机体系增量转为绝对世界目标：
@@ -223,7 +223,7 @@ live 模式下，桥把经过双重校验的绝对目标发布到 `/goal` 和 `/
 ### L1：观测链路
 
 - 飞机保持未解锁；
-- 启动 RealSense、FAST-LIO、EKF 和观测上行；
+- 启动 KINGSEN USB 相机、FAST-LIO、EKF 和观测上行；
 - 检查视频连续性、帧龄、位姿、CameraInfo、TF 和两端时间差；
 - 不创建 mission，不启动推理。
 

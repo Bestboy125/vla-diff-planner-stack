@@ -8,6 +8,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$localConfig = Join-Path $scriptRoot "ground_station.local.ps1"
+if (Test-Path -LiteralPath $localConfig) {
+    . $localConfig
+    if (-not $PSBoundParameters.ContainsKey("OpenVlaRoot")) { $OpenVlaRoot = $env:OPENVLA_PROJECT_ROOT }
+    if (-not $PSBoundParameters.ContainsKey("OpenVlaModel")) { $OpenVlaModel = $env:OPENVLA_MODEL_PATH }
+}
 $projectRoot = Split-Path -Parent $scriptRoot
 $artifactRoot = Join-Path $projectRoot "artifacts\vla_backend"
 $runtimeFile = Join-Path $artifactRoot "runtime.json"

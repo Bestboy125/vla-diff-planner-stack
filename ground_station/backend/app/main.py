@@ -20,6 +20,7 @@ from .schemas import (
     MissionMode,
     MissionState,
     OnboardObservation,
+    ObservationInferenceRequest,
     TaskDispatchRequest,
 )
 from .task_dispatch import TaskDispatcher
@@ -55,6 +56,7 @@ observation_pipeline = ObservationPipeline(
         body_frame=settings.expected_body_frame,
         camera_frame=settings.expected_camera_frame,
         calibration_id=settings.expected_calibration_id,
+        observation_mode=settings.observation_mode,
     ),
     mission_manager,
     model_gateway,
@@ -131,6 +133,16 @@ async def hold_mission(mission_id: UUID) -> dict:
 async def stop_mission(mission_id: UUID) -> dict:
     mission = await mission_manager.stop(mission_id)
     return {"mission": mission.model_dump(mode="json")}
+
+
+@app.post("/api/inference/latest-observation")
+async def latest_observation_inference(request: ObservationInferenceRequest) -> dict:
+    try:
+        return await observation_pipeline.infer_latest_no_motion(request.instruction, request.policy)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Model diagnostic failed: {}".format(type(exc).__name__)) from exc
 
 
 @app.post("/api/inference/openvla")

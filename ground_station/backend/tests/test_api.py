@@ -109,6 +109,25 @@ def test_atomic_live_task_is_rejected_by_host_safety_lock() -> None:
     assert response.status_code == 423
 
 
+def test_world_orbit_atomic_task_builds_structured_locked_command(monkeypatch) -> None:
+    async def forbidden_send(_command):
+        raise AssertionError("dry-run orbit must not contact the onboard bridge")
+    monkeypatch.setattr(task_dispatcher.onboard_bridge, "send", forbidden_send)
+    response = client.post("/api/tasks/dispatch", json={
+        "category": "atomic", "atomic_task": "orbit_world", "mode": "dry_run",
+        "parameters": {"center_x_m": 2.0, "center_y_m": -1.0, "center_z_m": 1.2,
+                       "radius_m": 1.5, "laps": 0.5, "orbit_direction": "counterclockwise"},
+    })
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["delivery"]["status"] == "safety_locked"
+    assert payload["command"]["command"] == "ORBIT_WORLD"
+    assert payload["command"]["orbit"] == {
+        "center": [2.0, -1.0, 1.2], "radius_m": 1.5, "laps": 0.5,
+        "direction": "counterclockwise", "yaw_mode": "face_center",
+    }
+
+
 def test_orbit_template_creates_running_dry_run_vla_mission() -> None:
     reset_manager()
     response = client.post(
@@ -327,7 +346,14 @@ def test_k_frame_pipeline_selects_only_every_kth_frame_and_sends_preview() -> No
 
         async def predict_openvla(self, _request):
             self.calls += 1
-            return {"action_local_delta": [[0.2, 0.0, 0.0, 0.1]]}
+            return {
+                "action_local_delta": [[0.2, 0.0, 0.0, 0.1]],
+                "action_chunk": [
+                    [0.2, 0.0, 0.0, 0.1],
+                    [0.2, 0.0, 0.0, 0.0],
+                    [0.2, 0.0, 0.0, 0.0],
+                ],
+            }
 
     class FakeBridge:
         sent = []
@@ -412,6 +438,7 @@ def test_k_frame_pipeline_selects_only_every_kth_frame_and_sends_preview() -> No
         assert len(bridge.sent) == 1
         assert bridge.sent[0]["type"] == "planning_preview"
         np.testing.assert_allclose(bridge.sent[0]["target_mission"], [[1.2, 2.0, 1.0, 0.1]])
+        assert len(bridge.sent[0]["action_chunk"]) == 3
 
     asyncio.run(scenario())
 

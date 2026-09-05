@@ -53,7 +53,7 @@ npm run dev
 - `GET /api/onboard/stream.mjpeg` 提供连续机载视频流。
 - `GET /api/tasks/catalog` 返回任务类型和参数边界。
 - `POST /api/tasks/dispatch` 校验/调度原子任务或创建连续 K 帧 VLA 任务。
-- 两者统一返回机体系第一步动作 `[dx, dy, dz, d_yaw]` 和任务坐标系目标。
+- 两者统一返回机体系动作 `[dx, dy, dz, d_yaw]`；地面站把完整动作块原样传给机载桥，不在后端选择航点。
 - `/ws/status` 向浏览器推送后端、任务、安全锁和模型健康状态。
 
 允许 Windows 防火墙指定网络配置文件的 TCP 8080 后，操作笔记本可访问
@@ -74,10 +74,25 @@ npm run dev
 - `ONBOARD_OBSERVATION_TOKEN`，观测上行独立密钥，默认 `REQUIRED`
 - `OBSERVATION_K_FRAMES`，每累计多少个新图像序号执行一次 VLA，默认 `5`
 - `OBSERVATION_MAX_AGE_MS` / `OBSERVATION_MAX_SYNC_ERROR_MS`，默认 `750/80`
-- `EXPECTED_WORLD_FRAME` / `EXPECTED_BODY_FRAME` / `EXPECTED_CAMERA_FRAME`，默认 `world/base_link/camera_color_optical_frame`
+- `ONBOARD_MAX_CLOCK_OFFSET_MS`，Live 操作台启动前的双向绝对 NTP 时差上限，默认 `300`；有效样本间隔 10 秒，拒绝 KoD/未同步响应/超时。这只是启动检查，不是持续时钟监控。
+- `OBSERVATION_MAX_FUTURE_SKEW_MS`，观测时间戳领先主机的上限，默认 `300`；不是图像与里程计对齐误差，也不能单独测量两端时差。
+- `EXPECTED_WORLD_FRAME` / `EXPECTED_BODY_FRAME` / `EXPECTED_CAMERA_FRAME`，默认 `world/base_link/vla_usb_camera_optical_frame`
 - `EXPECTED_CALIBRATION_ID`，必须与机载已人工确认的标定 ID 一致，默认 `REQUIRED`
 
+VLA 的默认视觉输入为机载 KINGSEN 单目 USB 相机：`/vla_usb_camera/image_raw/compressed`、
+`/vla_usb_camera/camera_info`，光学坐标系为 `vla_usb_camera_optical_frame`。旧 D435
+标定 ID 不可复用；USB 相机内参、安装外参和方向检查全部完成后，才能在主机和机载端
+写入同一个新标定 ID。
+
+当前分步启动和语言任务输入说明见 `docs/OPENVLA_LIVE_START_20260904.md`。
+本次私有配置已显式启用 `VLA_OBSERVATION_MODE=image_odom`：仅图像、语言和飞机里程计，不依赖相机安装外参，不支持基于该外参的目标三维定位。观测中的外参为 null，完整标定标志为 false；主机必须配置相同模式才能接受，CameraInfo、odom、时间和 frame/配置 ID 校验仍保留。公共默认值为 `calibrated`，不会隐式降级。
+`start_vla_full_preview.ps1` 和机载 `start_onboard_vla_full_preview.sh` 已更新：默认锁定/隔离预览，显式 Live 确认后连接真实控制链；机载入口使用 USB 而不是 D435，不再生成旧相机外参。具体两条一键命令见上面的启动说明。
+
 Dry-run 的 OpenVLA 和 π0.5 生成 schema v2 规划预览。Live 具身任务生成 schema v1 连续轨迹，原子任务使用 schema v3；三者均受主机和机载双端开关约束。系统不提供 MAVROS 解锁或模式切换接口。
+
+π0.5 动作块的世界系累计、6/8 航点采样、进度投影与过期剔除均在机载 `vla_diff_bridge` 完成。
+主机只附加 `action_chunk` 传输字段；机载保留采样队列，随最新 odom 进度逐个交给 Diff-Planner，
+不是只发布终点。默认 8 点，可在机载设置 `VLA_ACTION_CHUNK_SAMPLE_COUNT=6`。
 
 同时运行两种模型时，先在一个 PowerShell 终端启动：
 

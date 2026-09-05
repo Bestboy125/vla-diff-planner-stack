@@ -47,6 +47,7 @@ class AtomicTaskName(str, Enum):
     MOVE_DOWN = "move_down"
     YAW_LEFT = "yaw_left"
     YAW_RIGHT = "yaw_right"
+    ORBIT_WORLD = "orbit_world"
 
 
 class EmbodiedTaskName(str, Enum):
@@ -75,13 +76,16 @@ class MissionCreate(BaseModel):
 
 
 class TaskParameters(BaseModel):
-    distance_m: float = Field(default=0.5, ge=0.05, le=1.0)
-    takeoff_height_m: float = Field(default=1.0, ge=0.3, le=2.0)
+    distance_m: float = Field(default=0.5, ge=0.05, le=2.0)
+    takeoff_height_m: float = Field(default=0.8, ge=0.3, le=2.0)
     yaw_deg: float = Field(default=30.0, ge=1.0, le=90.0)
     target_label: str = Field(default="", max_length=100)
     radius_m: float = Field(default=1.5, ge=0.5, le=5.0)
     laps: float = Field(default=1.0, ge=0.25, le=3.0)
     orbit_direction: OrbitDirection = OrbitDirection.CLOCKWISE
+    center_x_m: float = Field(default=0.0, ge=-1000.0, le=1000.0)
+    center_y_m: float = Field(default=0.0, ge=-1000.0, le=1000.0)
+    center_z_m: float = Field(default=1.0, ge=-100.0, le=100.0)
     extra_distance_m: float = Field(default=2.0, ge=0.2, le=5.0)
 
     @field_validator("target_label")
@@ -136,6 +140,11 @@ class Mission(BaseModel):
     status_message: str = "Mission created; waiting to start."
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+
+
+class ObservationInferenceRequest(BaseModel):
+    instruction: str = Field(min_length=2, max_length=500)
+    policy: PolicyName = PolicyName.OPENVLA
 
 
 class InferenceRequest(BaseModel):
@@ -249,10 +258,21 @@ class OnboardObservation(BaseModel):
     image_frame_id: str = Field(min_length=1, max_length=128)
     odometry: OdometryState
     camera_intrinsics: CameraIntrinsics
-    body_from_camera: RigidTransform
+    observation_mode: Literal["calibrated", "image_odom"] = "calibrated"
+    body_from_camera: RigidTransform | None = None
     calibration_id: str = Field(min_length=1, max_length=128)
     calibration_validated: bool = False
     planner_preview: PlannerPreviewState | None = None
+
+    @model_validator(mode="after")
+    def explicit_extrinsic_contract(self):
+        if self.observation_mode == "calibrated" and self.body_from_camera is None:
+            raise ValueError("calibrated observations require body_from_camera")
+        if self.observation_mode == "image_odom" and (
+            self.body_from_camera is not None or self.calibration_validated
+        ):
+            raise ValueError("image_odom must omit extrinsics and cannot claim full calibration")
+        return self
 
 
 class PlanningPreviewRequest(BaseModel):
@@ -268,6 +288,7 @@ class PlanningPreviewRequest(BaseModel):
     camera_frame_id: str
     action_local_delta: list[list[float]]
     target_mission: list[list[float]]
+    action_chunk: list[list[float]] | None = None
 
     @field_validator("action_local_delta", "target_mission")
     @classmethod
@@ -280,6 +301,19 @@ class PlanningPreviewRequest(BaseModel):
             raise ValueError("value must contain finite numbers")
         return value
 
+    @field_validator("action_chunk")
+    @classmethod
+    def validate_preview_chunk(cls, value: list[list[float]] | None) -> list[list[float]] | None:
+        import math
+
+        if value is None:
+            return None
+        if not 1 <= len(value) <= 50 or any(len(row) != 4 for row in value):
+            raise ValueError("action_chunk must have shape [1..50, 4]")
+        if not all(math.isfinite(item) for row in value for item in row):
+            raise ValueError("action_chunk must contain finite numbers")
+        return value
+
 
 class BridgeCommandRequest(BaseModel):
     mission_id: UUID
@@ -288,6 +322,7 @@ class BridgeCommandRequest(BaseModel):
     command: BridgeCommandName
     action_local_delta: list[list[float]] | None = None
     target_mission: list[list[float]] | None = None
+    action_chunk: list[list[float]] | None = None
 
     @field_validator("action_local_delta", "target_mission")
     @classmethod
@@ -300,6 +335,19 @@ class BridgeCommandRequest(BaseModel):
             raise ValueError("value must have shape [1, 4]")
         if not all(math.isfinite(item) for item in value[0]):
             raise ValueError("value must contain finite numbers")
+        return value
+
+    @field_validator("action_chunk")
+    @classmethod
+    def validate_optional_chunk(cls, value: list[list[float]] | None) -> list[list[float]] | None:
+        import math
+
+        if value is None:
+            return None
+        if not 1 <= len(value) <= 50 or any(len(row) != 4 for row in value):
+            raise ValueError("action_chunk must have shape [1..50, 4]")
+        if not all(math.isfinite(item) for row in value for item in row):
+            raise ValueError("action_chunk must contain finite numbers")
         return value
 
     @model_validator(mode="after")

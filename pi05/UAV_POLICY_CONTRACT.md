@@ -34,7 +34,7 @@ observation/state: float32[4]
 prompt: string
 ```
 
-The OpenPI policy server returns `actions: float[horizon, 4]`. The backend validates finite values, exposes the complete chunk for diagnostics, and uses only the first action as the common VLA/diff-planner trajectory proposal.
+The OpenPI policy server returns `actions: float[horizon, 4]`. The backend validates finite values, exposes the complete chunk for diagnostics, and transports it unchanged in the host-to-onboard message. The onboard `vla_diff_bridge` performs world-frame accumulation and latest-odometry look-ahead filtering, then publishes one validated future target to Diff-Planner. The backend does not select the waypoint.
 
 Start the local policy server from PowerShell:
 

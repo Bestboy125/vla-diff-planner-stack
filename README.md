@@ -60,8 +60,11 @@ FAST-LIO/EKF + Diff-Planner + traj_server + PX4Ctrl
 The host receives RGB images, camera calibration, body-to-camera transforms,
 odometry, and planner feedback. Every K accepted image frames, the selected VLA
 policy is invoked with the current instruction and synchronized vehicle state.
-Only the first bounded action of a returned action chunk is used before the next
-perception cycle.
+The host transports the complete bounded action chunk without choosing a future
+step. The onboard bridge incrementally aligns that chunk to the fixed world
+frame, projects the latest FAST-LIO/EKF position onto it, discards waypoints
+already traversed during inference, and sends the first valid future target to
+Diff-Planner. Single-action OpenVLA responses retain the legacy path.
 
 ## Safety model
 

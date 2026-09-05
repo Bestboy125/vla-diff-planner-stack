@@ -1,6 +1,6 @@
 # VLA + FAST-LIO + Diff-Planner 实机测试 SOP
 
-适用架构：机载 RealSense / MID-360 / FAST-LIO / EKF / Diff-Planner，Windows 主机 OpenVLA 后端，Wi-Fi 双向通信。
+适用架构：机载 KINGSEN 单目 USB 相机 / MID-360 / FAST-LIO / EKF / Diff-Planner，Windows 主机 OpenVLA 后端，Wi-Fi 双向通信。
 
 本文采用逐级放权原则。任一级未满足通过条件，不得进入下一级。首次实机测试不得直接运行完整的 `sh_files/run_single_lio.sh`，因为该脚本会连续启动 MAVROS、FAST-LIO、EKF、Diff-Planner、PX4Ctrl 和 multipoint 任务，无法在传感器、规划器和控制器之间设置人工门禁。
 
@@ -28,15 +28,17 @@ G6 K 帧连续 VLA + Diff-Planner 受限任务
 
 ## 2. 当前实飞前阻断项
 
-以下三项未关闭前，只允许 G1/G2，不允许飞行：
+默认 calibrated 模式下，以下三项未关闭前，只允许 G1/G2，不允许飞行。
+2026-09-04 操作员另行确认了 image_odom 测试范围：保留 FAST-LIO/EKF 飞机定位，不做目标三维定位。
+仅在双端显式设置 `VLA_OBSERVATION_MODE=image_odom` 时，跳过第 3 项相机外参投影要求；其余时间、定位、坐标方向、故障保护与人工接管检查不变。这不宣称完成了相机外参标定。
 
-1. 相机画面目前主要是近距离墙面或机体结构。必须调整安装角度并确认无遮挡、无保护膜、无明显过曝。
-2. 机载时钟比 Windows 主机约快 3 秒。正式测试应使用 NTP/chrony/PTP 将偏差压到 100 ms 以内，不应依赖测试时的 5 秒容差。
-3. 当前 `body/base_link -> camera` 外参来自仓库中的 VINS 初值，标识为 `comm-test-unvalidated-handeye`。必须完成实机手眼标定、静态复核和方向检查，生成正式 calibration ID。
+1. VLA 输入已切换为 KINGSEN KS2A418-2.0 单目 USB 相机。必须确认设备 by-id、安装角度、无遮挡、无保护膜、无明显过曝，并核对 640×480 内参确实属于这台相机。
+2. 2026-09-04 按操作员要求，将机载与 Windows 的绝对时差检查上限设为 300 ms。使用 `ground_station/backend/tools/check_onboard_clock.py` 检查有效 NTP 响应（排除 KoD、未同步响应和超时），间隔至少 10 秒。Live 操作台启动前自动检查；这不是持续运行的时钟监控，也不表示 Windows 校时服务已恢复。不得放宽图像—里程计 80 ms 对齐要求、指令 TTL 或机载过期剔除；超过 300 ms、测量失败或运行中时钟跳变时停止放行。
+3. USB 相机必须重新完成 `base_link -> vla_usb_camera_optical_frame` 安装外参、静态复核和方向检查，生成正式 calibration ID；旧 D435 或 `comm-test-unvalidated-handeye` 标定 ID 均不得复用。
 
 建议同时将 `run_single_lio.sh` 拆成四个独立入口：
 
-- `run_sensors_localization.sh`：MAVROS 遥测、MID-360、FAST-LIO、EKF、RealSense。
+- `run_sensors_localization.sh`：MAVROS 遥测、MID-360、FAST-LIO、EKF、USB 相机。
 - `run_vla_preview.sh`：图像/位姿上报和 `/vla/preview_*` 回传。
 - `run_diff_planner_shadow.sh`：只输出优化轨迹预览，不接控制器。
 - `run_flight_control.sh`：PX4Ctrl 与最终控制话题；只允许飞行负责人在对应门禁通过后启动。
@@ -78,7 +80,7 @@ G6 K 帧连续 VLA + Diff-Planner 受限任务
 
 1. 启动飞控、遥控器和 QGroundControl，确认 `armed=false`。
 2. 启动 ROS master 与 MAVROS 遥测；不发送 arm、takeoff、mode 或 setpoint 命令。
-3. 启动 MID-360、FAST-LIO、EKF 和 RealSense。
+3. 启动 MID-360、FAST-LIO、EKF 和 KINGSEN USB 相机。
 4. 检查相机、CameraInfo、FAST-LIO、EKF、TF 和时间戳。
 5. 启动 Windows OpenVLA 服务和地面站后端，保持 `CONTROL_OUTPUT_ENABLED=false`。
 6. 启动机载 observation uplink 与 preview-only bridge。

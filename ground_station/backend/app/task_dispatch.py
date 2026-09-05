@@ -33,6 +33,7 @@ ATOMIC_LABELS = {
     AtomicTaskName.MOVE_DOWN: "向下移动",
     AtomicTaskName.YAW_LEFT: "向左旋转",
     AtomicTaskName.YAW_RIGHT: "向右旋转",
+    AtomicTaskName.ORBIT_WORLD: "按世界坐标圆心绕飞",
 }
 
 
@@ -76,8 +77,8 @@ class TaskDispatcher:
                 },
             ],
             "limits": {
-                "distance_m": [0.05, 1.0],
-                "takeoff_height_m": [0.3, 2.0],
+                "distance_m": [0.05, 2.0],
+                "takeoff_height_m": [0.8, 0.8],
                 "yaw_deg": [1.0, 90.0],
                 "radius_m": [0.5, 5.0],
                 "laps": [0.25, 3.0],
@@ -130,6 +131,8 @@ class TaskDispatcher:
         assert request.atomic_task is not None
         task_id = str(uuid4())
         magnitude = self._atomic_magnitude(request)
+        if request.atomic_task == AtomicTaskName.TAKEOFF and abs(magnitude - 0.8) > 1e-6:
+            raise HTTPException(status_code=422, detail="Takeoff height is fixed at 0.8 m in the VLA launch configuration.")
         async with self._lock:
             sequence = self._sequence
             self._sequence += 1
@@ -141,6 +144,20 @@ class TaskDispatcher:
             ttl_ms=self.command_ttl_ms,
             world_frame=self.world_frame,
             body_frame=self.body_frame,
+            orbit=(
+                {
+                    "center": [
+                        request.parameters.center_x_m,
+                        request.parameters.center_y_m,
+                        request.parameters.center_z_m,
+                    ],
+                    "radius_m": request.parameters.radius_m,
+                    "laps": request.parameters.laps,
+                    "direction": request.parameters.orbit_direction.value,
+                    "yaw_mode": "face_center",
+                }
+                if request.atomic_task == AtomicTaskName.ORBIT_WORLD else None
+            ),
         )
         if request.mode == MissionMode.DRY_RUN:
             delivery = {
@@ -193,6 +210,8 @@ class TaskDispatcher:
             return math.radians(request.parameters.yaw_deg)
         if request.atomic_task in {AtomicTaskName.HOLD, AtomicTaskName.LAND}:
             return 0.0
+        if request.atomic_task == AtomicTaskName.ORBIT_WORLD:
+            return request.parameters.radius_m
         return request.parameters.distance_m
 
     @staticmethod

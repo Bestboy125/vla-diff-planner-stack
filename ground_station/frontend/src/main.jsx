@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { api } from "./api.js";
 import "./styles.css";
 
 const initialSystem = {
@@ -18,17 +19,8 @@ const atomicTasks = [
   ["move_left", "左移", "←"], ["move_right", "右移", "→"],
   ["move_up", "上升", "+Z"], ["move_down", "下降", "−Z"],
   ["yaw_left", "左旋", "↺"], ["yaw_right", "右旋", "↻"],
+  ["orbit_world", "定点绕飞", "○"],
 ];
-
-async function api(path, options = {}) {
-  const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.detail || `Request failed: ${response.status}`);
-  return payload;
-}
 
 function StatusDot({ status }) {
   return <span className={`status-dot status-${status}`} aria-hidden="true" />;
@@ -52,11 +44,14 @@ function App() {
   const [policy, setPolicy] = useState("openvla");
   const [mode, setMode] = useState("dry_run");
   const [distance, setDistance] = useState(0.5);
-  const [takeoffHeight, setTakeoffHeight] = useState(1.0);
+  const takeoffHeight = 0.8;
   const [yawDeg, setYawDeg] = useState(30);
   const [radius, setRadius] = useState(1.5);
   const [laps, setLaps] = useState(1);
   const [orbitDirection, setOrbitDirection] = useState("clockwise");
+  const [centerX, setCenterX] = useState(0);
+  const [centerY, setCenterY] = useState(0);
+  const [centerZ, setCenterZ] = useState(1);
   const [extraDistance, setExtraDistance] = useState(2);
   const [operatorToken, setOperatorToken] = useState("");
   const [liveConfirmation, setLiveConfirmation] = useState("");
@@ -110,6 +105,7 @@ function App() {
       if (atomicTask === "takeoff") return `${selected?.[1]}（配置高度 ${takeoffHeight} m）`;
       if (["yaw_left", "yaw_right"].includes(atomicTask)) return `${selected?.[1]} ${yawDeg}°`;
       if (["hold", "land"].includes(atomicTask)) return selected?.[1] || atomicTask;
+      if (atomicTask === "orbit_world") return `${selected?.[1]}：圆心 (${centerX}, ${centerY}, ${centerZ}) m，半径 ${radius} m，${orbitDirection === "clockwise" ? "顺时针" : "逆时针"} ${laps} 圈`;
       return `${selected?.[1]} ${distance} m`;
     }
     if (embodiedTask === "orbit_target") return `以 ${radius} m 半径${orbitDirection === "clockwise" ? "顺时针" : "逆时针"}绕 ${targetLabel} 飞行 ${laps} 圈`;
@@ -132,6 +128,7 @@ function App() {
           distance_m: distance, takeoff_height_m: takeoffHeight, yaw_deg: yawDeg,
           target_label: targetLabel, radius_m: radius, laps,
           orbit_direction: orbitDirection, extra_distance_m: extraDistance,
+          center_x_m: centerX, center_y_m: centerY, center_z_m: centerZ,
         },
       }),
     });
@@ -171,6 +168,14 @@ function App() {
     });
     setAction(payload.action_local_delta[0]);
     appendChat("system", `${policy === "openvla" ? "OpenVLA" : "π0.5"} 离线单帧推理完成，结果未下发。`);
+  });
+
+  const inferLatestFrame = () => perform(async () => {
+    const payload = await api('/api/inference/latest-observation', {
+      method: 'POST', body: JSON.stringify({ instruction, policy }),
+    });
+    setAction(payload.action_local_delta[0]);
+    appendChat('system', `实时帧 #${payload.observation_sequence} 推理完成：${payload.latency_ms} ms。未下发动作，未验证飞行执行。`);
   });
 
   const actionRows = useMemo(() => {
@@ -214,7 +219,7 @@ function App() {
 
           {category === "atomic" ? <>
             <div className="atomic-grid">{atomicTasks.map(([name, label, glyph]) => <button key={name} className={atomicTask === name ? "selected" : ""} onClick={() => setAtomicTask(name)}><b>{glyph}</b><span>{label}</span></button>)}</div>
-            <div className="parameter-grid"><NumericField label="移动距离" value={distance} setValue={setDistance} min="0.05" max="1" step="0.05" unit="m" /><NumericField label="起飞配置高度" value={takeoffHeight} setValue={setTakeoffHeight} min="0.3" max="2" step="0.1" unit="m" /><NumericField label="旋转角度" value={yawDeg} setValue={setYawDeg} min="1" max="90" step="1" unit="°" /></div>
+            {atomicTask === "orbit_world" ? <div className="parameter-grid"><NumericField label="圆心 X" value={centerX} setValue={setCenterX} min="-1000" max="1000" step="0.1" unit="m" /><NumericField label="圆心 Y" value={centerY} setValue={setCenterY} min="-1000" max="1000" step="0.1" unit="m" /><NumericField label="圆心 Z / 绕飞高度" value={centerZ} setValue={setCenterZ} min="-100" max="100" step="0.1" unit="m" /><NumericField label="绕飞半径" value={radius} setValue={setRadius} min="0.5" max="5" step="0.1" unit="m" /><NumericField label="圈数" value={laps} setValue={setLaps} min="0.25" max="3" step="0.25" unit="圈" /><label className="numeric-field"><span>方向</span><select value={orbitDirection} onChange={(event) => setOrbitDirection(event.target.value)}><option value="clockwise">顺时针</option><option value="counterclockwise">逆时针</option></select></label></div> : <div className="parameter-grid"><NumericField label="移动距离" value={distance} setValue={setDistance} min="0.05" max="2" step="0.05" unit="m" /><div className="numeric-field"><span>起飞相对高度（固定）</span><div>0.8 m</div><small>LIVE 起飞请求通过检查后，PX4Ctrl 会尝试切换 Offboard、自动解锁并爬升。非测试按钮。</small></div><NumericField label="旋转角度" value={yawDeg} setValue={setYawDeg} min="1" max="90" step="1" unit="°" /></div>}
           </> : <>
             <div className="template-row"><button className={embodiedTask === "freeform" ? "selected" : ""} onClick={() => setEmbodiedTask("freeform")}>自由指令</button><button className={embodiedTask === "orbit_target" ? "selected" : ""} onClick={() => setEmbodiedTask("orbit_target")}>绕目标飞行</button><button className={embodiedTask === "pass_target_forward" ? "selected" : ""} onClick={() => setEmbodiedTask("pass_target_forward")}>飞过后前进</button></div>
             {embodiedTask === "freeform" ? <textarea className="instruction-box" value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="输入要完成的具身目标……" /> : <><label className="text-field"><span>目标名称</span><input value={targetLabel} onChange={(event) => setTargetLabel(event.target.value)} placeholder="例如：椅子、电线杆、红色箱子" /></label>{embodiedTask === "orbit_target" ? <div className="parameter-grid"><NumericField label="绕飞半径" value={radius} setValue={setRadius} min="0.5" max="5" step="0.1" unit="m" /><NumericField label="圈数" value={laps} setValue={setLaps} min="0.25" max="3" step="0.25" unit="圈" /><label className="numeric-field"><span>方向</span><select value={orbitDirection} onChange={(event) => setOrbitDirection(event.target.value)}><option value="clockwise">顺时针</option><option value="counterclockwise">逆时针</option></select></label></div> : <div className="parameter-grid"><NumericField label="通过后继续前进" value={extraDistance} setValue={setExtraDistance} min="0.2" max="5" step="0.1" unit="m" /></div>}</>}
@@ -223,9 +228,10 @@ function App() {
           <div className="dispatch-settings"><label><span>策略</span><select value={policy} onChange={(event) => setPolicy(event.target.value)}><option value="openvla">OpenVLA 3ep</option><option value="pi05">π0.5 1ep</option></select></label><label><span>模式</span><select value={mode} onChange={(event) => setMode(event.target.value)}><option value="dry_run">Dry-run（不下发）</option><option value="live">Live（实机）</option></select></label></div>
           {mode === "live" && <div className="live-gate"><strong>实机双重确认</strong><input type="password" value={operatorToken} onChange={(event) => setOperatorToken(event.target.value)} placeholder="操作令牌" /><input value={liveConfirmation} onChange={(event) => setLiveConfirmation(event.target.value)} placeholder="输入主机配置的确认短语" /><small>{liveReady ? "主机输出开关已开启，仍需机载桥开关。" : "主机输出锁尚未开启，本请求会被拒绝。"}</small></div>}
           <button className={`dispatch-button ${mode}`} disabled={busy} onClick={dispatchTask}>{busy ? "处理中……" : mode === "live" ? "确认并下发实机任务" : "提交 Dry-run 任务"}</button>
-          <div className="mission-actions"><button disabled={busy || missionState !== "RUNNING"} onClick={() => missionCommand("hold")}>暂停 VLA</button><button disabled={busy || !mission || ["ABORTED", "SUCCEEDED", "FAULT"].includes(missionState)} onClick={() => missionCommand("stop")}>停止任务</button><button disabled={busy || !imageBase64} onClick={inferTestFrame}>离线单帧推理</button></div>
+          <div className="mission-actions"><button disabled={busy || missionState !== "RUNNING"} onClick={() => missionCommand("hold")}>暂停 VLA</button><button disabled={busy || !mission || ["ABORTED", "SUCCEEDED", "FAULT"].includes(missionState)} onClick={() => missionCommand("stop")}>停止任务</button><button disabled={busy || !imageBase64} onClick={inferTestFrame}>离线单帧推理</button><button disabled={busy || !onboard.connected || onboard.diagnostic_busy || missionState === "RUNNING"} onClick={inferLatestFrame}>实时帧推理（不下发）</button></div>
           {mission && <div className="mission-id"><span>当前任务</span><code>{mission.mission_id}</code><p>{mission.status_message}</p></div>}
         </article>
+        {onboard.observation_mode === "image_odom" && <article className="safety-note"><span>图像 + 里程计测试模式</span><p>当前未使用相机安装外参，不支持依赖外参的目标三维定位。FAST-LIO/EKF、时间检查及航点过期剔除仍然有效；calibration_validated=false 表示未声明完整外参标定，不会阻断本模式。</p></article>}
         <article className="safety-note"><span>安全边界</span><p>网页默认只做轨迹预览。Live 请求必须同时通过主机输出开关、操作令牌、确认短语和机载发布开关；本页面不会发送 MAVROS 解锁或飞控模式切换命令。</p></article>
       </aside>
     </section>

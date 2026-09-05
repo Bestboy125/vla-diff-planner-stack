@@ -30,6 +30,7 @@ def build_trajectory_command(request: BridgeCommandRequest, ttl_ms: int) -> dict
         "action_units": ACTION_UNITS,
         "action_local_delta": request.action_local_delta,
         "target_mission": request.target_mission,
+        "action_chunk": request.action_chunk,
     }
 
 
@@ -57,6 +58,7 @@ def build_planning_preview(request: PlanningPreviewRequest, ttl_ms: int) -> dict
         "action_units": ACTION_UNITS,
         "action_local_delta": request.action_local_delta,
         "target_mission": request.target_mission,
+        "action_chunk": request.action_chunk,
     }
 
 
@@ -68,12 +70,13 @@ def build_operator_task(
     ttl_ms: int,
     world_frame: str,
     body_frame: str,
+    orbit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a one-shot, operator-selected onboard primitive."""
     unit = "rad" if action in {AtomicTaskName.YAW_LEFT, AtomicTaskName.YAW_RIGHT} else "m"
     if action in {AtomicTaskName.HOLD, AtomicTaskName.LAND}:
         unit = "none"
-    return {
+    result = {
         "schema_version": 3,
         "type": "operator_task",
         "task_id": task_id,
@@ -86,6 +89,9 @@ def build_operator_task(
         "magnitude": magnitude,
         "magnitude_unit": unit,
     }
+    if orbit is not None:
+        result["orbit"] = orbit
+    return result
 
 
 class OnboardBridgeClient:

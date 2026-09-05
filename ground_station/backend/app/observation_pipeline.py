@@ -32,9 +32,12 @@ class ObservationContract:
     body_frame: str
     camera_frame: str
     calibration_id: str
-    max_future_skew_ms: int = 1000
+    max_future_skew_ms: int = 300
+    observation_mode: str = "calibrated"
 
     def __post_init__(self) -> None:
+        if self.observation_mode not in {"calibrated", "image_odom"}:
+            raise ValueError("VLA_OBSERVATION_MODE must be calibrated or image_odom")
         if self.k_frames < 1:
             raise ValueError("OBSERVATION_K_FRAMES must be >= 1")
         if self.max_future_skew_ms < 0:
@@ -87,6 +90,8 @@ class ObservationPipeline:
         self._last_error: str | None = None
         self._last_received_monotonic: float | None = None
         self._receive_times: deque[float] = deque(maxlen=60)
+        self._diagnostic_busy = False
+        self._last_diagnostic: dict[str, Any] | None = None
 
     async def ingest(self, observation: OnboardObservation) -> dict[str, Any]:
         jpeg = self._validate_observation(observation)
@@ -103,7 +108,7 @@ class ObservationPipeline:
             self._accepted_frames += 1
             self._frames_since_inference += 1
             should_infer = self._frames_since_inference >= self.contract.k_frames
-            busy = self._inference_task is not None and not self._inference_task.done()
+            busy = self._diagnostic_busy or (self._inference_task is not None and not self._inference_task.done())
             if should_infer and not busy:
                 self._frames_since_inference = 0
                 self._inference_task = asyncio.create_task(self._infer_and_preview(observation))
@@ -113,6 +118,55 @@ class ObservationPipeline:
             "selected_for_inference": should_infer and not busy,
             "k_frames": self.contract.k_frames,
         }
+
+    async def infer_latest_no_motion(self, instruction: str, policy: PolicyName) -> dict[str, Any]:
+        """Model diagnostic only. Never creates a mission or sends a bridge command."""
+        mission = await self.mission_manager.current()
+        if mission is not None and mission.state == MissionState.RUNNING:
+            raise ValueError('diagnostic unavailable while a mission is RUNNING')
+        async with self._lock:
+            if self._diagnostic_busy or (self._inference_task is not None and not self._inference_task.done()):
+                raise ValueError('inference is busy; retry when idle')
+            if self._latest is None:
+                raise ValueError('no onboard observation is available')
+            observation = self._latest.model_copy(deep=True)
+            self._validate_observation(observation)
+            self._diagnostic_busy = True
+        started = time.monotonic()
+        try:
+            pose = observation.odometry.pose
+            q = pose.orientation
+            yaw = quaternion_yaw(q.x, q.y, q.z, q.w)
+            request = InferenceRequest(
+                image_base64=observation.image_base64, instruction=instruction,
+                proprio=[pose.position.x, pose.position.y, pose.position.z, math.degrees(yaw)],
+            )
+            predict = self.model_gateway.predict_openvla if policy == PolicyName.OPENVLA else self.model_gateway.predict_pi05
+            prediction = await predict(request)
+            action = prediction['action_local_delta']
+            if (len(action) != 1 or len(action[0]) != 4
+                    or not all(math.isfinite(float(value)) for value in action[0])):
+                raise ValueError('model action must be one finite 4D body delta')
+            action = [[float(value) for value in action[0]]]
+            result = {
+                'policy': policy.value,
+                'observation_sequence': observation.sequence,
+                'capture_unix_ms': observation.capture_unix_ms,
+                'action_local_delta': action,
+                'target_world': body_delta_to_world_target(
+                    (pose.position.x, pose.position.y, pose.position.z), yaw, action),
+                'latency_ms': round((time.monotonic() - started) * 1000, 1),
+                'source_age_at_completion_ms': int(time.time() * 1000) - observation.capture_unix_ms,
+                'motion_command_sent': False,
+                'flight_execution_validated': False,
+                'output_mode': 'diagnostic_only',
+            }
+            async with self._lock:
+                self._last_diagnostic = result
+            return result
+        finally:
+            async with self._lock:
+                self._diagnostic_busy = False
 
     def _validate_observation(self, observation: OnboardObservation) -> bytes:
         now_ms = int(time.time() * 1000)
@@ -128,13 +182,20 @@ class ObservationPipeline:
             raise ValueError("odometry child frame does not match EXPECTED_BODY_FRAME")
         if observation.image_frame_id != self.contract.camera_frame:
             raise ValueError("image frame does not match EXPECTED_CAMERA_FRAME")
+        if observation.observation_mode != self.contract.observation_mode:
+            raise ValueError("observation mode does not match host configuration")
         transform = observation.body_from_camera
-        if transform.parent_frame_id != self.contract.body_frame:
-            raise ValueError("camera extrinsic parent must be the body frame")
-        if transform.child_frame_id != self.contract.camera_frame:
-            raise ValueError("camera extrinsic child must be the optical frame")
-        if not observation.calibration_validated:
-            raise ValueError("camera calibration is not operator-validated")
+        if self.contract.observation_mode == "calibrated":
+            if transform is None:
+                raise ValueError("calibrated mode requires camera extrinsics")
+            if transform.parent_frame_id != self.contract.body_frame:
+                raise ValueError("camera extrinsic parent must be the body frame")
+            if transform.child_frame_id != self.contract.camera_frame:
+                raise ValueError("camera extrinsic child must be the optical frame")
+            if not observation.calibration_validated:
+                raise ValueError("camera calibration is not operator-validated")
+        elif transform is not None or observation.calibration_validated:
+            raise ValueError("image_odom cannot claim calibrated camera extrinsics")
         if self.contract.calibration_id == "REQUIRED":
             raise ValueError("EXPECTED_CALIBRATION_ID must be configured")
         if observation.calibration_id != self.contract.calibration_id:
@@ -167,6 +228,7 @@ class ObservationPipeline:
             else:
                 result = await self.model_gateway.predict_pi05(request)
             action = result["action_local_delta"]
+            action_chunk = result.get("action_chunk") or action
             target = body_delta_to_world_target(
                 (pose.position.x, pose.position.y, pose.position.z), yaw, action
             )
@@ -182,6 +244,7 @@ class ObservationPipeline:
                         command=BridgeCommandName.TRACK,
                         action_local_delta=action,
                         target_mission=target,
+                        action_chunk=action_chunk,
                     ),
                     self.command_ttl_ms,
                 )
@@ -200,6 +263,7 @@ class ObservationPipeline:
                     camera_frame_id=self.contract.camera_frame,
                     action_local_delta=action,
                     target_mission=target,
+                    action_chunk=action_chunk,
                 )
                 command = build_planning_preview(preview, self.command_ttl_ms)
                 output_mode = "planner_preview"
@@ -256,6 +320,8 @@ class ObservationPipeline:
                 "camera_frame": latest.image_frame_id if latest else None,
                 "calibration_id": latest.calibration_id if latest else None,
                 "calibration_validated": latest.calibration_validated if latest else False,
+                "observation_mode": self.contract.observation_mode,
+                "camera_extrinsics_used": self.contract.observation_mode == "calibrated",
                 "accepted_frames": self._accepted_frames,
                 "receive_age_ms": receive_age_ms,
                 "receive_fps": receive_fps,
@@ -263,6 +329,8 @@ class ObservationPipeline:
                 "k_frames": self.contract.k_frames,
                 "inference_busy": busy,
                 "last_result": self._last_result,
+                "diagnostic_busy": self._diagnostic_busy,
+                "last_diagnostic": self._last_diagnostic,
                 "last_error": self._last_error,
                 "local_state": local_state,
                 "planner_preview": latest.planner_preview.model_dump() if latest and latest.planner_preview else None,

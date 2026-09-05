@@ -57,6 +57,12 @@ if ($EnableLiveControl) {
     if (-not $env:EXPECTED_CALIBRATION_ID -or $env:EXPECTED_CALIBRATION_ID -eq "REQUIRED") {
         throw "EXPECTED_CALIBRATION_ID must be configured before live control can be enabled."
     }
+    # Read-only preflight before enabling/starting any live backend. A KoD or
+    # timeout is not a valid zero-offset sample. This is not an in-flight monitor.
+    $clockLimitMs = if ($env:ONBOARD_MAX_CLOCK_OFFSET_MS) { $env:ONBOARD_MAX_CLOCK_OFFSET_MS } else { "300" }
+    & $backendPython (Join-Path $backendRoot "tools\check_onboard_clock.py") `
+        --host $env:ONBOARD_BRIDGE_HOST --max-offset-ms $clockLimitMs
+    if ($LASTEXITCODE -ne 0) { throw "Onboard clock preflight failed; live backend was not started." }
     $env:CONTROL_OUTPUT_ENABLED = "true"
 }
 else {
