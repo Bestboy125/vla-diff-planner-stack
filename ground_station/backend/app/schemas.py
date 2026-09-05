@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from enum import Enum
+import re
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -54,6 +55,7 @@ class EmbodiedTaskName(str, Enum):
     FREEFORM = "freeform"
     ORBIT_TARGET = "orbit_target"
     PASS_TARGET_FORWARD = "pass_target_forward"
+    SEMANTIC_ORBIT = "semantic_orbit"
 
 
 class OrbitDirection(str, Enum):
@@ -126,8 +128,18 @@ class TaskDispatchRequest(BaseModel):
             if self.embodied_task in {
                 EmbodiedTaskName.ORBIT_TARGET,
                 EmbodiedTaskName.PASS_TARGET_FORWARD,
+                EmbodiedTaskName.SEMANTIC_ORBIT,
             } and not self.parameters.target_label:
                 raise ValueError("the selected embodied task requires target_label")
+            if self.embodied_task == EmbodiedTaskName.SEMANTIC_ORBIT:
+                if re.fullmatch(r"[A-Za-z][A-Za-z-]{0,31}", self.parameters.target_label) is None:
+                    raise ValueError(
+                        "semantic_orbit target_label must be one English word (letters and optional hyphens)"
+                    )
+                if abs(self.parameters.radius_m - 1.5) > 1e-6:
+                    raise ValueError("semantic_orbit radius_m is fixed at 1.5")
+                if abs(self.parameters.laps - 1.0) > 1e-6:
+                    raise ValueError("semantic_orbit laps is fixed at 1")
         return self
 
 

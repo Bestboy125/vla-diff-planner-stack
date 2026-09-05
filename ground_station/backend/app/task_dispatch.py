@@ -9,7 +9,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from .mission import MissionManager
-from .onboard_bridge import OnboardBridgeClient, build_operator_task
+from .onboard_bridge import OnboardBridgeClient, build_operator_task, build_semantic_orbit_task
 from .schemas import (
     AtomicTaskName,
     EmbodiedTaskName,
@@ -71,6 +71,10 @@ class TaskDispatcher:
             "embodied_tasks": [
                 {"name": EmbodiedTaskName.FREEFORM.value, "label": "自由具身指令"},
                 {"name": EmbodiedTaskName.ORBIT_TARGET.value, "label": "按半径绕目标飞行"},
+                {
+                    "name": EmbodiedTaskName.SEMANTIC_ORBIT.value,
+                    "label": "YOLO-World 语义目标接近并绕飞",
+                },
                 {
                     "name": EmbodiedTaskName.PASS_TARGET_FORWARD.value,
                     "label": "飞过目标后继续前进",
@@ -181,6 +185,8 @@ class TaskDispatcher:
         }
 
     async def _dispatch_embodied(self, request: TaskDispatchRequest) -> dict[str, Any]:
+        if request.embodied_task == EmbodiedTaskName.SEMANTIC_ORBIT:
+            return await self._dispatch_semantic_orbit(request)
         instruction = self._compose_embodied_instruction(request)
         mission = await self.mission_manager.create(
             MissionCreate(instruction=instruction, policy=request.policy, mode=request.mode)
@@ -199,6 +205,44 @@ class TaskDispatcher:
                 "status": "mission_started",
                 "detail": "Waiting for the next K-frame VLA inference cycle.",
             },
+        }
+
+    async def _dispatch_semantic_orbit(self, request: TaskDispatchRequest) -> dict[str, Any]:
+        task_id = str(uuid4())
+        async with self._lock:
+            sequence = self._sequence
+            self._sequence += 1
+        command = build_semantic_orbit_task(
+            task_id=task_id,
+            sequence=sequence,
+            target_label=request.parameters.target_label,
+            ttl_ms=self.command_ttl_ms,
+            world_frame=self.world_frame,
+            body_frame=self.body_frame,
+            direction=request.parameters.orbit_direction.value,
+        )
+        if request.mode == MissionMode.DRY_RUN:
+            delivery = {
+                "status": "safety_locked",
+                "detail": (
+                    "Semantic target, fixed 1.5 m approach radius and one-lap orbit were "
+                    "validated; nothing was sent because mode=dry_run."
+                ),
+            }
+        else:
+            try:
+                delivery = await self.onboard_bridge.send(command)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {
+            "task_id": task_id,
+            "category": request.category.value,
+            "task": EmbodiedTaskName.SEMANTIC_ORBIT.value,
+            "label": "YOLO-World + raw stereo + Diff-Planner 语义绕飞",
+            "mode": request.mode.value,
+            "created_unix_ms": int(time.time() * 1000),
+            "command": command,
+            "delivery": delivery,
         }
 
     @staticmethod

@@ -67,7 +67,35 @@ geometric center.
 - left-camera target: `/semantic_raw_stereo_node/target_left_camera`
 - body/world targets: `/semantic_raw_stereo_node/target_body`, `target_world`
 - stable candidate: `/semantic_raw_stereo_node/stable_goal_candidate`
+- stable target center: `/semantic_raw_stereo_node/stable_target_world`
+- runtime target-class command/status: `/semantic_raw_stereo_node/target_class_command`,
+  `/semantic_raw_stereo_node/target_class_status`
 - one-shot commit service: `/semantic_raw_stereo_node/send_goal`
+
+## Semantic target orbit workflow
+
+`semantic_orbit_executor_node.py` is the board-side state machine used by the
+ground-station `semantic_orbit` task. The network bridge forwards only a validated
+English YOLO-World class name. After the localizer confirms that class and publishes
+a fresh stable 3-D target, the executor calls `/atomic_skill_executor/execute` with:
+
+- world-frame center X/Y from the stereo target;
+- current vehicle Z (the detector cannot command an altitude change);
+- radius `1.5 m`, angle `2*pi`, and `face_center` yaw;
+- a maximum `2.0 m` leg from the current position to the circle entry.
+
+The atomic ORBIT skill publishes its entry and circle waypoints to `/goal`, so
+Diff-Planner remains the only path-planning layer. The semantic localizer's own
+direct `/goal` output stays disabled. Both the bridge and semantic-orbit executor
+must have their independent live gates enabled, and the executor requires an
+already connected, armed vehicle with fresh odometry. It never arms or takes off.
+
+The combined D435 launch keeps the new gate closed by default:
+
+```bash
+roslaunch semantic_raw_stereo_localizer semantic_d435_raw_stereo_fastlio.launch \
+  semantic_orbit_execution_enabled:=false
+```
 
 Safe candidate-only launch when the D435 driver and EKF are already running:
 

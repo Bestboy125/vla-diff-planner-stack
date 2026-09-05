@@ -1,0 +1,16 @@
+<launch>
+  <arg name="execution_enabled" default="false"/>
+  <arg name="world_frame" default="world"/>
+  <arg name="odom_topic" default="/ekf/ekf_odom"/>
+  <arg name="request_topic" default="/vla_diff_bridge/semantic_orbit_request"/>
+  <arg name="cancel_topic" default="/vla_diff_bridge/semantic_orbit_cancel"/>
+
+  <node pkg="semantic_raw_stereo_localizer" type="semantic_orbit_executor_node.py"
+        name="semantic_orbit_executor" output="screen">
+    <param name="execution_enabled" value="$(arg execution_enabled)"/>
+    <param name="world_frame" value="$(arg world_frame)"/>
+    <param name="odom_topic" value="$(arg odom_topic)"/>
+    <remap from="~request" to="$(arg request_topic)"/>
+    <remap from="~cancel" to="$(arg cancel_topic)"/>
+  </node>
+</launch>

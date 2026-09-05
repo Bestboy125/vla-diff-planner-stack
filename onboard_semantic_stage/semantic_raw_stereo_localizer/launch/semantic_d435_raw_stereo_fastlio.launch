@@ -9,6 +9,7 @@
   <arg name="target_class" default="person"/>
   <arg name="confidence" default="0.20"/>
   <arg name="depth_backend" default="sgbm"/>
+  <arg name="semantic_orbit_execution_enabled" default="false"/>
 
   <include file="$(find realsense2_camera)/launch/rs_camera.launch">
     <arg name="enable_color" value="false"/>
@@ -33,5 +34,11 @@
     <arg name="target_class" value="$(arg target_class)"/>
     <arg name="confidence" value="$(arg confidence)"/>
     <arg name="depth_backend" value="$(arg depth_backend)"/>
+  </include>
+
+  <include file="$(find semantic_raw_stereo_localizer)/launch/semantic_orbit_executor.launch">
+    <arg name="execution_enabled" value="$(arg semantic_orbit_execution_enabled)"/>
+    <arg name="world_frame" value="$(arg world_frame)"/>
+    <arg name="odom_topic" value="$(arg odom_topic)"/>
   </include>
 </launch>

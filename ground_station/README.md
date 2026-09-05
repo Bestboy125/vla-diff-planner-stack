@@ -88,6 +88,12 @@ VLA 的默认视觉输入为机载 KINGSEN 单目 USB 相机：`/vla_usb_camera/
 本次私有配置已显式启用 `VLA_OBSERVATION_MODE=image_odom`：仅图像、语言和飞机里程计，不依赖相机安装外参，不支持基于该外参的目标三维定位。观测中的外参为 null，完整标定标志为 false；主机必须配置相同模式才能接受，CameraInfo、odom、时间和 frame/配置 ID 校验仍保留。公共默认值为 `calibrated`，不会隐式降级。
 `start_vla_full_preview.ps1` 和机载 `start_onboard_vla_full_preview.sh` 已更新：默认锁定/隔离预览，显式 Live 确认后连接真实控制链；机载入口使用 USB 而不是 D435，不再生成旧相机外参。具体两条一键命令见上面的启动说明。
 
+控制台的“语义检测绕飞”是独立于 OpenVLA/π0.5 的板载任务。输入一个英文
+YOLO-World 类别词后，后端生成 `SEMANTIC_ORBIT` 命令；Dry-run 只验证命令且
+不会连接机载桥。Live 模式仍需主机令牌和确认短语，机载端再依次执行 D435
+原始双目定位、稳定目标筛选、1.5 m 圆周入口规划以及一圈原子 ORBIT 技能。
+该任务不包含解锁或起飞，且保持收到任务时的飞行高度。
+
 Dry-run 的 OpenVLA 和 π0.5 生成 schema v2 规划预览。Live 具身任务生成 schema v1 连续轨迹，原子任务使用 schema v3；三者均受主机和机载双端开关约束。系统不提供 MAVROS 解锁或模式切换接口。
 
 π0.5 动作块的世界系累计、6/8 航点采样、进度投影与过期剔除均在机载 `vla_diff_bridge` 完成。

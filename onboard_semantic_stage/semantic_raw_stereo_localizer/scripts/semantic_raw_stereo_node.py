@@ -2,6 +2,7 @@
 """YOLO-World + raw D435 infrared stereo target localization, safe by default."""
 import json
 import os
+import re
 import sys
 import threading
 from collections import deque
@@ -331,6 +332,7 @@ class SemanticRawStereoNode(object):
             gp("~sgbm_speckle_range", 2), gp("~bbox_depth_shrink", 0.25),
             gp("~min_dense_pixels", 150))
         weights = os.path.expanduser(gp("~weights", "~/models/yolo_world/yolov8s-worldv2.pt"))
+        self.model_lock = threading.Lock()
         self.model = YOLOWorld(weights)
         self.model.set_classes(self.classes)
 
@@ -348,10 +350,16 @@ class SemanticRawStereoNode(object):
         self.camera_pub = rospy.Publisher("~target_left_camera", PointStamped, queue_size=1)
         self.body_pub = rospy.Publisher("~target_body", PointStamped, queue_size=1)
         self.world_pub = rospy.Publisher("~target_world", PointStamped, queue_size=1)
+        self.stable_world_pub = rospy.Publisher(
+            "~stable_target_world", PointStamped, queue_size=1
+        )
         self.candidate_pub = rospy.Publisher("~goal_candidate", PoseStamped, queue_size=1)
         self.stable_pub = rospy.Publisher("~stable_goal_candidate", PoseStamped, queue_size=1)
         self.json_pub = rospy.Publisher("~estimate_json", String, queue_size=1)
         self.annotated_pub = rospy.Publisher("~annotated_left", Image, queue_size=1)
+        self.target_class_status_pub = rospy.Publisher(
+            "~target_class_status", String, queue_size=1, latch=True
+        )
         self.goal_pub = None
         if self.execution_enabled and self.publish_planner_goal:
             self.goal_pub = rospy.Publisher(self.planner_goal_topic, PoseStamped, queue_size=1)
@@ -359,6 +367,12 @@ class SemanticRawStereoNode(object):
 
         rospy.Subscriber(gp("~left_info_topic"), CameraInfo, self.on_left_info, queue_size=1)
         rospy.Subscriber(gp("~right_info_topic"), CameraInfo, self.on_right_info, queue_size=1)
+        rospy.Subscriber(
+            gp("~target_class_command_topic", "~target_class_command"),
+            String,
+            self.on_target_class_command,
+            queue_size=1,
+        )
         left_sub = message_filters.Subscriber(gp("~left_topic"), Image)
         right_sub = message_filters.Subscriber(gp("~right_topic"), Image)
         odom_sub = message_filters.Subscriber(gp("~odom_topic"), Odometry)
@@ -374,6 +388,24 @@ class SemanticRawStereoNode(object):
 
     def on_right_info(self, message):
         self.right_info = message
+
+    def on_target_class_command(self, message):
+        target_class = message.data.strip().lower()
+        if re.fullmatch(r"[a-z][a-z-]{0,31}", target_class) is None:
+            rospy.logwarn("rejected target class; expected one English word")
+            return
+        with self.model_lock:
+            self.model.set_classes([target_class])
+            self.target_class = target_class
+            self.classes = [target_class]
+            with self.lock:
+                self.target_history.clear()
+                self.last_target_observation = rospy.Time(0)
+                self.stable_candidate = None
+                self.stable_candidate_stamp = rospy.Time(0)
+                self.last_auto_goal = None
+        self.target_class_status_pub.publish(String(data=target_class))
+        rospy.loginfo("YOLO-World target class changed to %s; stability history reset", target_class)
 
     def on_send_goal(self, _request):
         if self.goal_pub is None:
@@ -400,7 +432,8 @@ class SemanticRawStereoNode(object):
             self.busy = True
             self.last_inference = now
         try:
-            self.process(left_message, right_message, odom_message)
+            with self.model_lock:
+                self.process(left_message, right_message, odom_message)
         except Exception as exc:
             rospy.logwarn_throttle(2.0, "raw stereo observation rejected: %s", exc)
         finally:
@@ -544,6 +577,11 @@ class SemanticRawStereoNode(object):
                 (stable_candidate.pose.position.x, stable_candidate.pose.position.y,
                  stable_candidate.pose.position.z) = stable_goal
                 self.stable_pub.publish(stable_candidate)
+                stable_target_message = PointStamped()
+                stable_target_message.header = target_world_message.header
+                (stable_target_message.point.x, stable_target_message.point.y,
+                 stable_target_message.point.z) = stable_target
+                self.stable_world_pub.publish(stable_target_message)
                 with self.lock:
                     self.stable_candidate = deepcopy(stable_candidate)
                     self.stable_candidate_stamp = now

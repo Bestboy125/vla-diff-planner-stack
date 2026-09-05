@@ -94,6 +94,39 @@ def build_operator_task(
     return result
 
 
+def build_semantic_orbit_task(
+    task_id: str,
+    sequence: int,
+    target_label: str,
+    ttl_ms: int,
+    world_frame: str,
+    body_frame: str,
+    direction: str,
+) -> dict[str, Any]:
+    """Build the authenticated request consumed by the onboard semantic-orbit state machine."""
+    return {
+        "schema_version": 3,
+        "type": "operator_task",
+        "task_id": task_id,
+        "sequence": sequence,
+        "sent_at_unix_ms": int(time.time() * 1000),
+        "ttl_ms": ttl_ms,
+        "command": "SEMANTIC_ORBIT",
+        "frame_id": world_frame,
+        "body_frame_id": body_frame,
+        "magnitude": 1.5,
+        "magnitude_unit": "m",
+        "semantic_orbit": {
+            "target_label": target_label.lower(),
+            "radius_m": 1.5,
+            "laps": 1.0,
+            "direction": direction,
+            "yaw_mode": "face_center",
+            "keep_current_altitude": True,
+        },
+    }
+
+
 class OnboardBridgeClient:
     def __init__(self, host: str, port: int, token: str, timeout_sec: float = 1.0) -> None:
         self.host = host

@@ -16,7 +16,8 @@ from app.model_gateway import ModelGateway, _packb, _unpackb
 from app.onboard_bridge import OnboardBridgeClient
 from app.mission import MissionManager
 from app.observation_pipeline import ObservationContract, ObservationPipeline, body_delta_to_world_target
-from app.schemas import InferenceRequest, MissionCreate, OnboardObservation
+from app.schemas import InferenceRequest, MissionCreate, OnboardObservation, TaskDispatchRequest
+from app.task_dispatch import TaskDispatcher
 
 
 client = TestClient(app)
@@ -150,6 +151,99 @@ def test_orbit_template_creates_running_dry_run_vla_mission() -> None:
     assert payload["mission"]["state"] == "RUNNING"
     assert "电线杆" in payload["normalized_instruction"]
     assert "1.50米" in payload["normalized_instruction"]
+
+
+def test_semantic_orbit_dry_run_builds_locked_onboard_workflow(monkeypatch) -> None:
+    async def forbidden_send(_command):
+        raise AssertionError("semantic dry-run must not contact the onboard bridge")
+
+    monkeypatch.setattr(task_dispatcher.onboard_bridge, "send", forbidden_send)
+    response = client.post(
+        "/api/tasks/dispatch",
+        json={
+            "category": "embodied",
+            "embodied_task": "semantic_orbit",
+            "mode": "dry_run",
+            "parameters": {
+                "target_label": "chair",
+                "radius_m": 1.5,
+                "laps": 1,
+                "orbit_direction": "clockwise",
+            },
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["delivery"]["status"] == "safety_locked"
+    assert payload["command"]["command"] == "SEMANTIC_ORBIT"
+    assert payload["command"]["semantic_orbit"] == {
+        "target_label": "chair",
+        "radius_m": 1.5,
+        "laps": 1.0,
+        "direction": "clockwise",
+        "yaw_mode": "face_center",
+        "keep_current_altitude": True,
+    }
+
+
+def test_semantic_orbit_rejects_non_english_or_multiword_target() -> None:
+    for target in ("椅子", "red chair", "chair_1"):
+        response = client.post(
+            "/api/tasks/dispatch",
+            json={
+                "category": "embodied",
+                "embodied_task": "semantic_orbit",
+                "mode": "dry_run",
+                "parameters": {"target_label": target, "radius_m": 1.5, "laps": 1},
+            },
+        )
+        assert response.status_code == 422
+
+
+def test_authorized_live_semantic_orbit_is_delivered_as_operator_task() -> None:
+    class FakeBridge:
+        sent = []
+
+        async def send(self, command):
+            self.sent.append(command)
+            return {
+                "type": "operator_task_ack",
+                "task_id": command["task_id"],
+                "sequence": command["sequence"],
+                "status": "accepted",
+            }
+
+    async def scenario() -> None:
+        bridge = FakeBridge()
+        dispatcher = TaskDispatcher(
+            MissionManager(control_output_enabled=True),
+            bridge,
+            control_output_enabled=True,
+            operator_control_token="unit-test-operator-token",
+            live_control_confirmation="UNIT_TEST_CONFIRMATION",
+            command_ttl_ms=500,
+            world_frame="world",
+            body_frame="base_link",
+        )
+        request = TaskDispatchRequest.model_validate({
+            "category": "embodied",
+            "embodied_task": "semantic_orbit",
+            "mode": "live",
+            "live_confirmation": "UNIT_TEST_CONFIRMATION",
+            "parameters": {
+                "target_label": "chair",
+                "radius_m": 1.5,
+                "laps": 1,
+                "orbit_direction": "clockwise",
+            },
+        })
+        result = await dispatcher.dispatch(request, "unit-test-operator-token")
+        assert result["delivery"]["status"] == "accepted"
+        assert len(bridge.sent) == 1
+        assert bridge.sent[0]["type"] == "operator_task"
+        assert bridge.sent[0]["command"] == "SEMANTIC_ORBIT"
+
+    asyncio.run(scenario())
 
 
 def test_proprio_requires_four_values() -> None:

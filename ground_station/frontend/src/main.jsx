@@ -40,7 +40,7 @@ function App() {
   const [atomicTask, setAtomicTask] = useState("move_forward");
   const [embodiedTask, setEmbodiedTask] = useState("freeform");
   const [instruction, setInstruction] = useState("向前飞行，并与障碍物保持安全距离");
-  const [targetLabel, setTargetLabel] = useState("电线杆");
+  const [targetLabel, setTargetLabel] = useState("chair");
   const [policy, setPolicy] = useState("openvla");
   const [mode, setMode] = useState("dry_run");
   const [distance, setDistance] = useState(0.5);
@@ -108,6 +108,7 @@ function App() {
       if (atomicTask === "orbit_world") return `${selected?.[1]}：圆心 (${centerX}, ${centerY}, ${centerZ}) m，半径 ${radius} m，${orbitDirection === "clockwise" ? "顺时针" : "逆时针"} ${laps} 圈`;
       return `${selected?.[1]} ${distance} m`;
     }
+    if (embodiedTask === "semantic_orbit") return `YOLO-World 检测 ${targetLabel}，在当前高度以 1.5 m 半径${orbitDirection === "clockwise" ? "顺时针" : "逆时针"}绕飞 1 圈`;
     if (embodiedTask === "orbit_target") return `以 ${radius} m 半径${orbitDirection === "clockwise" ? "顺时针" : "逆时针"}绕 ${targetLabel} 飞行 ${laps} 圈`;
     if (embodiedTask === "pass_target_forward") return `飞过 ${targetLabel} 后继续前进 ${extraDistance} m`;
     return instruction;
@@ -126,7 +127,9 @@ function App() {
         instruction, policy, mode, live_confirmation: liveConfirmation,
         parameters: {
           distance_m: distance, takeoff_height_m: takeoffHeight, yaw_deg: yawDeg,
-          target_label: targetLabel, radius_m: radius, laps,
+          target_label: targetLabel,
+          radius_m: embodiedTask === "semantic_orbit" ? 1.5 : radius,
+          laps: embodiedTask === "semantic_orbit" ? 1 : laps,
           orbit_direction: orbitDirection, extra_distance_m: extraDistance,
           center_x_m: centerX, center_y_m: centerY, center_z_m: centerZ,
         },
@@ -215,17 +218,25 @@ function App() {
         <article className="panel command-panel">
           <div className="panel-heading"><div><span className="eyebrow">Operator dialog</span><h2>任务对话与控制</h2></div><span className={`mode-badge ${mode}`}>{mode}</span></div>
           <div className="chat-window">{chat.map((message, index) => <div className={`chat-message ${message.role}`} key={`${message.time.getTime()}-${index}`}><span>{message.role === "operator" ? "操作员" : message.role === "error" ? "错误" : "系统"}</span><p>{message.text}</p><time>{message.time.toLocaleTimeString("zh-CN", { hour12: false })}</time></div>)}</div>
-          <div className="task-tabs"><button className={category === "atomic" ? "active" : ""} onClick={() => setCategory("atomic")}>原子任务</button><button className={category === "embodied" ? "active" : ""} onClick={() => setCategory("embodied")}>VLA 具身任务</button></div>
+          <div className="task-tabs"><button className={category === "atomic" ? "active" : ""} onClick={() => setCategory("atomic")}>原子任务</button><button className={category === "embodied" ? "active" : ""} onClick={() => setCategory("embodied")}>具身 / 语义任务</button></div>
 
           {category === "atomic" ? <>
             <div className="atomic-grid">{atomicTasks.map(([name, label, glyph]) => <button key={name} className={atomicTask === name ? "selected" : ""} onClick={() => setAtomicTask(name)}><b>{glyph}</b><span>{label}</span></button>)}</div>
             {atomicTask === "orbit_world" ? <div className="parameter-grid"><NumericField label="圆心 X" value={centerX} setValue={setCenterX} min="-1000" max="1000" step="0.1" unit="m" /><NumericField label="圆心 Y" value={centerY} setValue={setCenterY} min="-1000" max="1000" step="0.1" unit="m" /><NumericField label="圆心 Z / 绕飞高度" value={centerZ} setValue={setCenterZ} min="-100" max="100" step="0.1" unit="m" /><NumericField label="绕飞半径" value={radius} setValue={setRadius} min="0.5" max="5" step="0.1" unit="m" /><NumericField label="圈数" value={laps} setValue={setLaps} min="0.25" max="3" step="0.25" unit="圈" /><label className="numeric-field"><span>方向</span><select value={orbitDirection} onChange={(event) => setOrbitDirection(event.target.value)}><option value="clockwise">顺时针</option><option value="counterclockwise">逆时针</option></select></label></div> : <div className="parameter-grid"><NumericField label="移动距离" value={distance} setValue={setDistance} min="0.05" max="2" step="0.05" unit="m" /><div className="numeric-field"><span>起飞相对高度（固定）</span><div>0.8 m</div><small>LIVE 起飞请求通过检查后，PX4Ctrl 会尝试切换 Offboard、自动解锁并爬升。非测试按钮。</small></div><NumericField label="旋转角度" value={yawDeg} setValue={setYawDeg} min="1" max="90" step="1" unit="°" /></div>}
           </> : <>
-            <div className="template-row"><button className={embodiedTask === "freeform" ? "selected" : ""} onClick={() => setEmbodiedTask("freeform")}>自由指令</button><button className={embodiedTask === "orbit_target" ? "selected" : ""} onClick={() => setEmbodiedTask("orbit_target")}>绕目标飞行</button><button className={embodiedTask === "pass_target_forward" ? "selected" : ""} onClick={() => setEmbodiedTask("pass_target_forward")}>飞过后前进</button></div>
-            {embodiedTask === "freeform" ? <textarea className="instruction-box" value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="输入要完成的具身目标……" /> : <><label className="text-field"><span>目标名称</span><input value={targetLabel} onChange={(event) => setTargetLabel(event.target.value)} placeholder="例如：椅子、电线杆、红色箱子" /></label>{embodiedTask === "orbit_target" ? <div className="parameter-grid"><NumericField label="绕飞半径" value={radius} setValue={setRadius} min="0.5" max="5" step="0.1" unit="m" /><NumericField label="圈数" value={laps} setValue={setLaps} min="0.25" max="3" step="0.25" unit="圈" /><label className="numeric-field"><span>方向</span><select value={orbitDirection} onChange={(event) => setOrbitDirection(event.target.value)}><option value="clockwise">顺时针</option><option value="counterclockwise">逆时针</option></select></label></div> : <div className="parameter-grid"><NumericField label="通过后继续前进" value={extraDistance} setValue={setExtraDistance} min="0.2" max="5" step="0.1" unit="m" /></div>}</>}
+            <div className="template-row">
+              <button className={embodiedTask === "freeform" ? "selected" : ""} onClick={() => setEmbodiedTask("freeform")}>自由指令</button>
+              <button className={embodiedTask === "semantic_orbit" ? "selected" : ""} onClick={() => { setEmbodiedTask("semantic_orbit"); setTargetLabel("chair"); }}>语义检测绕飞</button>
+              <button className={embodiedTask === "orbit_target" ? "selected" : ""} onClick={() => setEmbodiedTask("orbit_target")}>VLA 绕目标</button>
+              <button className={embodiedTask === "pass_target_forward" ? "selected" : ""} onClick={() => setEmbodiedTask("pass_target_forward")}>飞过后前进</button>
+            </div>
+            {embodiedTask === "freeform" ? <textarea className="instruction-box" value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="输入要完成的具身目标……" /> : <>
+              <label className="text-field"><span>{embodiedTask === "semantic_orbit" ? "YOLO-World 英文目标词" : "目标名称"}</span><input value={targetLabel} onChange={(event) => setTargetLabel(event.target.value)} pattern={embodiedTask === "semantic_orbit" ? "[A-Za-z][A-Za-z-]{0,31}" : undefined} placeholder={embodiedTask === "semantic_orbit" ? "例如：chair、person、bottle" : "例如：椅子、电线杆、红色箱子"} /></label>
+              {embodiedTask === "semantic_orbit" ? <div className="parameter-grid"><div className="numeric-field"><span>固定任务参数</span><div>半径 1.5 m · 1 圈 · 保持当前高度</div><small>板载 YOLO-World + 原始双目三角化定位；原子绕飞技能先生成圆周入口点，再交由 Diff-Planner。</small></div><label className="numeric-field"><span>方向</span><select value={orbitDirection} onChange={(event) => setOrbitDirection(event.target.value)}><option value="clockwise">顺时针</option><option value="counterclockwise">逆时针</option></select></label></div> : embodiedTask === "orbit_target" ? <div className="parameter-grid"><NumericField label="绕飞半径" value={radius} setValue={setRadius} min="0.5" max="5" step="0.1" unit="m" /><NumericField label="圈数" value={laps} setValue={setLaps} min="0.25" max="3" step="0.25" unit="圈" /><label className="numeric-field"><span>方向</span><select value={orbitDirection} onChange={(event) => setOrbitDirection(event.target.value)}><option value="clockwise">顺时针</option><option value="counterclockwise">逆时针</option></select></label></div> : <div className="parameter-grid"><NumericField label="通过后继续前进" value={extraDistance} setValue={setExtraDistance} min="0.2" max="5" step="0.1" unit="m" /></div>}
+            </>}
           </>}
 
-          <div className="dispatch-settings"><label><span>策略</span><select value={policy} onChange={(event) => setPolicy(event.target.value)}><option value="openvla">OpenVLA 3ep</option><option value="pi05">π0.5 1ep</option></select></label><label><span>模式</span><select value={mode} onChange={(event) => setMode(event.target.value)}><option value="dry_run">Dry-run（不下发）</option><option value="live">Live（实机）</option></select></label></div>
+          <div className="dispatch-settings">{embodiedTask === "semantic_orbit" && category === "embodied" ? <label><span>板载流水线</span><div>YOLO-World → stereo → Diff-Planner → atomic ORBIT</div></label> : <label><span>策略</span><select value={policy} onChange={(event) => setPolicy(event.target.value)}><option value="openvla">OpenVLA 3ep</option><option value="pi05">π0.5 1ep</option></select></label>}<label><span>模式</span><select value={mode} onChange={(event) => setMode(event.target.value)}><option value="dry_run">Dry-run（不下发）</option><option value="live">Live（实机）</option></select></label></div>
           {mode === "live" && <div className="live-gate"><strong>实机双重确认</strong><input type="password" value={operatorToken} onChange={(event) => setOperatorToken(event.target.value)} placeholder="操作令牌" /><input value={liveConfirmation} onChange={(event) => setLiveConfirmation(event.target.value)} placeholder="输入主机配置的确认短语" /><small>{liveReady ? "主机输出开关已开启，仍需机载桥开关。" : "主机输出锁尚未开启，本请求会被拒绝。"}</small></div>}
           <button className={`dispatch-button ${mode}`} disabled={busy} onClick={dispatchTask}>{busy ? "处理中……" : mode === "live" ? "确认并下发实机任务" : "提交 Dry-run 任务"}</button>
           <div className="mission-actions"><button disabled={busy || missionState !== "RUNNING"} onClick={() => missionCommand("hold")}>暂停 VLA</button><button disabled={busy || !mission || ["ABORTED", "SUCCEEDED", "FAULT"].includes(missionState)} onClick={() => missionCommand("stop")}>停止任务</button><button disabled={busy || !imageBase64} onClick={inferTestFrame}>离线单帧推理</button><button disabled={busy || !onboard.connected || onboard.diagnostic_busy || missionState === "RUNNING"} onClick={inferLatestFrame}>实时帧推理（不下发）</button></div>
