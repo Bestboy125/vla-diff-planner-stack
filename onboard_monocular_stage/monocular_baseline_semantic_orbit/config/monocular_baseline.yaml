@@ -1,0 +1,23 @@
+# Two-position estimator fed by the D435 rectified left view. Topic and the
+# calibrated body-to-left-camera transform are bound by the launch entry.
+weights: "~/models/yolo_world/yolov8s-worldv2.pt"
+confidence: 0.20
+device: 0
+min_matches: 4
+max_reprojection_error_px: 4.0
+max_target_range_m: 50.0
+min_identity_confidence: 0.15
+min_estimate_confidence: 0.12
+max_relative_range_std: 0.35
+min_measured_baseline_m: 0.45
+max_measured_baseline_m: 1.10
+baseline_settle_time: 0.8
+capture_velocity_tolerance: 0.18
+capture_timeout: 20.0
+max_sensor_skew: 0.08
+sync_queue: 30
+sync_slop: 0.04
+max_approach_leg: 2.0
+max_approach_stages: 4
+approach_timeout: 60.0
+orbit_timeout: 120.0

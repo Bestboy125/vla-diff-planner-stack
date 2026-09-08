@@ -7,6 +7,24 @@ class SemanticOrbitError(ValueError):
     pass
 
 
+def altitude_agl(world_z_m, reference_z_m, minimum_agl_m, maximum_agl_m):
+    values = tuple(float(value) for value in
+                   (world_z_m, reference_z_m, minimum_agl_m, maximum_agl_m))
+    if not all(math.isfinite(value) for value in values):
+        raise SemanticOrbitError("altitude reference and bounds must be finite")
+    world_z, reference_z, minimum_agl, maximum_agl = values
+    if minimum_agl >= maximum_agl:
+        raise SemanticOrbitError("minimum AGL must be below maximum AGL")
+    agl_m = world_z - reference_z
+    if not minimum_agl <= agl_m <= maximum_agl:
+        raise SemanticOrbitError(
+            "vehicle altitude %.3f m AGL is outside [%.3f, %.3f] m; "
+            "world_z=%.3f, reference_z=%.3f" %
+            (agl_m, minimum_agl, maximum_agl, world_z, reference_z)
+        )
+    return agl_m
+
+
 def validate_semantic_orbit_request(payload):
     if not isinstance(payload, dict):
         raise SemanticOrbitError("request must be an object")
@@ -32,8 +50,19 @@ def validate_semantic_orbit_request(payload):
     task_id = payload.get("task_id")
     if not isinstance(task_id, str) or not task_id or len(task_id) > 128:
         raise SemanticOrbitError("task_id is invalid")
+    seed = payload.get("target_world_hint")
+    if seed is not None:
+        if not isinstance(seed, (list, tuple)) or len(seed) != 3:
+            raise SemanticOrbitError("target_world_hint must contain XYZ")
+        try:
+            seed = tuple(float(v) for v in seed)
+        except (TypeError, ValueError) as exc:
+            raise SemanticOrbitError("target_world_hint must be finite") from exc
+        if not all(math.isfinite(v) for v in seed):
+            raise SemanticOrbitError("target_world_hint must be finite")
     return {
         "task_id": task_id,
+        "target_world_hint": seed,
         "target_label": target.lower(),
         "radius_m": radius,
         "laps": laps,
@@ -44,9 +73,25 @@ def validate_semantic_orbit_request(payload):
 
 
 def build_world_orbit_spec(request, target_world, current_position, max_approach_leg_m):
+    spec = build_staged_orbit_spec(
+        request, target_world, current_position, max_approach_leg_m
+    )
+    if spec["approach_required"]:
+        raise SemanticOrbitError(
+            "circle entry is %.3f m away, above the %.3f m approach limit"
+            % (spec["approach_leg_m"], max_approach_leg_m)
+        )
+    return spec
+
+
+def build_staged_orbit_spec(request, target_world, current_position,
+                            max_approach_leg_m):
     values = tuple(float(value) for value in tuple(target_world) + tuple(current_position))
     if len(values) != 6 or not all(math.isfinite(value) for value in values):
         raise SemanticOrbitError("target and current position must contain three finite values")
+    max_approach_leg = float(max_approach_leg_m)
+    if not math.isfinite(max_approach_leg) or max_approach_leg <= 0.0:
+        raise SemanticOrbitError("maximum approach leg must be finite and positive")
     tx, ty, _target_z, x, y, z = values
     horizontal_distance = math.hypot(x - tx, y - ty)
     if horizontal_distance <= 1e-6:
@@ -61,10 +106,14 @@ def build_world_orbit_spec(request, target_world, current_position, max_approach
         z,
     )
     approach_leg = math.hypot(x - entry_world[0], y - entry_world[1])
-    if approach_leg > float(max_approach_leg_m):
-        raise SemanticOrbitError(
-            "circle entry is %.3f m away, above the %.3f m approach limit"
-            % (approach_leg, max_approach_leg_m)
+    approach_required = approach_leg > max_approach_leg
+    approach_waypoint = entry_world
+    if approach_required:
+        scale = max_approach_leg / approach_leg
+        approach_waypoint = (
+            x + (entry_world[0] - x) * scale,
+            y + (entry_world[1] - y) * scale,
+            z,
         )
     return {
         "center": (tx, ty, z),
@@ -74,4 +123,6 @@ def build_world_orbit_spec(request, target_world, current_position, max_approach
         "direction": "cw" if request["direction"] == "clockwise" else "ccw",
         "yaw_mode": request["yaw_mode"],
         "approach_leg_m": approach_leg,
+        "approach_required": approach_required,
+        "approach_waypoint_world": approach_waypoint,
     }

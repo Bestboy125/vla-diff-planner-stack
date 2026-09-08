@@ -1,0 +1,14 @@
+<launch>
+  <arg name="weights" default="$(env HOME)/models/yolo_world/yolov8s-worldv2.pt"/>
+  <arg name="device" default="0"/>
+  <arg name="service_name" default="/shared_yolo_world_detector/detect"/>
+
+  <node pkg="shared_yolo_world_detector"
+        type="shared_yolo_world_detector_node.py"
+        name="shared_yolo_world_detector"
+        output="screen" required="true">
+    <param name="weights" value="$(arg weights)"/>
+    <param name="device" value="$(arg device)"/>
+    <param name="service_name" value="$(arg service_name)"/>
+  </node>
+</launch>

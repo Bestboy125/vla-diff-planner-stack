@@ -1,0 +1,31 @@
+# Fixed world axes: legacy width = X sweep length (6 m), length = +Y span
+# (10 m). Five sweeps are spaced 2.5 m apart; body yaw never rotates the route.
+scan_width_m: 6.0
+scan_length_m: 10.0
+sweep_count: 5
+scan_waypoint_spacing_m: 1.0
+turn_samples: 6
+turn_bulge_ratio: 0.45
+max_world_goto_leg_m: 1.8
+waypoint_timeout: 60.0
+
+# Detection and interruption gates.
+target_label: chair
+target_timeout: 0.50
+stop_velocity_tolerance: 0.15
+stop_settle_time: 0.60
+orbit_status_timeout: 1800.0
+post_orbit_detection_cooldown: 5.0
+processed_target_radius_m: 1.0
+
+# Existing verified stereo semantic orbit contract.
+orbit_radius_m: 1.5
+orbit_laps: 1.0
+orbit_direction: clockwise
+orbit_yaw_mode: face_center
+
+# Flight readiness gates. Startup itself never sends a goal.
+odom_timeout: 0.30
+altitude_reference_z_m: 0.0
+min_operating_altitude: 0.30
+max_operating_altitude: 2.0

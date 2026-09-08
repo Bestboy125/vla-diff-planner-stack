@@ -1,0 +1,45 @@
+<launch>
+  <arg name="execution_enabled" default="false"/>
+  <arg name="image_topic" default="/camera/infra1/image_rect_raw"/>
+  <arg name="camera_info_topic" default="/camera/infra1/camera_info"/>
+  <arg name="odom_topic" default="/ekf/ekf_odom"/>
+  <arg name="fcu_state_topic" default="/mavros/state"/>
+  <arg name="world_frame" default="world"/>
+  <arg name="body_frame" default="base_link"/>
+  <arg name="camera_frame" default="camera_infra1_optical_frame"/>
+  <arg name="allow_empty_odom_child_frame" default="true"/>
+  <arg name="altitude_reference_z_m" default="0.0"/>
+  <arg name="min_operating_altitude" default="0.30"/>
+  <arg name="max_operating_altitude" default="2.0"/>
+  <arg name="detector_backend" default="local"/>
+  <arg name="detector_service" default="/shared_yolo_world_detector/detect"/>
+  <arg name="body_T_camera_param" default=""/>
+  <arg name="camera_extrinsic_frame_param" default=""/>
+  <arg name="request_topic" default="/vla_diff_bridge/monocular_semantic_orbit_request"/>
+  <arg name="cancel_topic" default="/vla_diff_bridge/monocular_semantic_orbit_cancel"/>
+
+  <node pkg="monocular_baseline_semantic_orbit"
+        type="monocular_semantic_orbit_node.py"
+        name="monocular_semantic_orbit"
+        output="screen" required="true">
+    <rosparam command="load" file="$(find monocular_baseline_semantic_orbit)/config/monocular_baseline.yaml"/>
+    <param name="execution_enabled" value="$(arg execution_enabled)"/>
+    <param name="world_frame" value="$(arg world_frame)"/>
+    <param name="body_frame" value="$(arg body_frame)"/>
+    <param name="camera_frame" value="$(arg camera_frame)"/>
+    <param name="allow_empty_odom_child_frame" value="$(arg allow_empty_odom_child_frame)"/>
+    <param name="altitude_reference_z_m" value="$(arg altitude_reference_z_m)"/>
+    <param name="min_operating_altitude" value="$(arg min_operating_altitude)"/>
+    <param name="max_operating_altitude" value="$(arg max_operating_altitude)"/>
+    <param name="detector_backend" value="$(arg detector_backend)"/>
+    <param name="detector_service" value="$(arg detector_service)"/>
+    <param name="body_T_camera_param" value="$(arg body_T_camera_param)"/>
+    <param name="camera_extrinsic_frame_param" value="$(arg camera_extrinsic_frame_param)"/>
+    <remap from="~image" to="$(arg image_topic)"/>
+    <remap from="~camera_info" to="$(arg camera_info_topic)"/>
+    <remap from="~odom" to="$(arg odom_topic)"/>
+    <remap from="~fcu_state" to="$(arg fcu_state_topic)"/>
+    <remap from="~request" to="$(arg request_topic)"/>
+    <remap from="~cancel" to="$(arg cancel_topic)"/>
+  </node>
+</launch>

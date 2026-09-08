@@ -15,9 +15,9 @@ import rospy
 from geometry_msgs.msg import PointStamped, PoseStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import CameraInfo, Image
-from std_msgs.msg import String
+from shared_yolo_world_detector.srv import DetectTarget
+from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger, TriggerResponse
-from ultralytics import YOLOWorld
 
 sys.path.insert(0, os.path.dirname(__file__))
 from raw_stereo_geometry import (bbox_center_point, body_to_world, camera_to_body,
@@ -287,6 +287,12 @@ class SemanticRawStereoNode(object):
         self.confidence = float(gp("~confidence", 0.20))
         self.device = gp("~device", 0)
         self.debug_bbox = gp("~debug_bbox", [])
+        self.detector_backend = str(gp("~detector_backend", "local")).lower()
+        self.detector_service = str(
+            gp("~detector_service", "/shared_yolo_world_detector/detect")
+        )
+        if self.detector_backend not in ("local", "shared_service"):
+            raise ValueError("~detector_backend must be local or shared_service")
         self.depth_backend = gp("~depth_backend", "sgbm").lower()
         if self.depth_backend not in ("sgbm", "orb", "lightglue"):
             raise ValueError("~depth_backend must be sgbm, orb or lightglue")
@@ -294,7 +300,9 @@ class SemanticRawStereoNode(object):
         self.max_sensor_skew = float(gp("~max_sensor_skew", 0.10))
         self.max_rate = float(gp("~max_inference_rate", 2.0))
         self.min_depth = float(gp("~min_depth", 0.35))
-        self.max_depth = float(gp("~max_depth", 6.0))
+        self.max_depth = float(gp("~max_depth", 30.0))
+        self.precise_depth = float(gp("~precise_depth_m", 6.0))
+        self.last_depth_band = None
         self.min_disparity = float(gp("~min_disparity_px", 1.0))
         self.max_epipolar_error = float(gp("~max_epipolar_error_px", 1.5))
         self.depth_mad_scale = float(gp("~depth_mad_scale", 3.5))
@@ -334,14 +342,26 @@ class SemanticRawStereoNode(object):
             gp("~sgbm_uniqueness_ratio", 8), gp("~sgbm_speckle_window_size", 60),
             gp("~sgbm_speckle_range", 2), gp("~bbox_depth_shrink", 0.25),
             gp("~min_dense_pixels", 150))
-        weights = os.path.expanduser(gp("~weights", "~/models/yolo_world/yolov8s-worldv2.pt"))
         self.model_lock = threading.Lock()
-        self.model = YOLOWorld(weights)
-        self.model.set_classes(self.classes)
+        self.model = None
+        self.detect_proxy = None
+        if self.detector_backend == "local":
+            from ultralytics import YOLOWorld
+            weights = os.path.expanduser(
+                gp("~weights", "~/models/yolo_world/yolov8s-worldv2.pt")
+            )
+            self.model = YOLOWorld(weights)
+            self.model.set_classes(self.classes)
+        else:
+            rospy.wait_for_service(self.detector_service, timeout=60.0)
+            self.detect_proxy = rospy.ServiceProxy(
+                self.detector_service, DetectTarget, persistent=True
+            )
 
         self.left_info = None
         self.right_info = None
         self.lock = threading.Lock()
+        self.inference_enabled = bool(gp("~inference_enabled", True))
         self.busy = False
         self.last_inference = rospy.Time(0)
         self.target_history = deque(maxlen=self.min_stable_observations)
@@ -356,6 +376,8 @@ class SemanticRawStereoNode(object):
         self.stable_world_pub = rospy.Publisher(
             "~stable_target_world", PointStamped, queue_size=1
         )
+        self.coarse_world_pub = rospy.Publisher(
+            "~stable_coarse_target_world", PointStamped, queue_size=1)
         self.candidate_pub = rospy.Publisher("~goal_candidate", PoseStamped, queue_size=1)
         self.stable_pub = rospy.Publisher("~stable_goal_candidate", PoseStamped, queue_size=1)
         self.json_pub = rospy.Publisher("~estimate_json", String, queue_size=1)
@@ -374,6 +396,12 @@ class SemanticRawStereoNode(object):
             gp("~target_class_command_topic", "~target_class_command"),
             String,
             self.on_target_class_command,
+            queue_size=1,
+        )
+        rospy.Subscriber(
+            gp("~inference_enabled_topic", "~inference_enabled"),
+            Bool,
+            self.on_inference_enabled,
             queue_size=1,
         )
         left_sub = message_filters.Subscriber(gp("~left_topic"), Image)
@@ -398,7 +426,8 @@ class SemanticRawStereoNode(object):
             rospy.logwarn("rejected target class; expected one English word")
             return
         with self.model_lock:
-            self.model.set_classes([target_class])
+            if self.model is not None:
+                self.model.set_classes([target_class])
             self.target_class = target_class
             self.classes = [target_class]
             with self.lock:
@@ -409,6 +438,19 @@ class SemanticRawStereoNode(object):
                 self.last_auto_goal = None
         self.target_class_status_pub.publish(String(data=target_class))
         rospy.loginfo("YOLO-World target class changed to %s; stability history reset", target_class)
+
+    def on_inference_enabled(self, message):
+        enabled = bool(message.data)
+        with self.lock:
+            changed = enabled != self.inference_enabled
+            self.inference_enabled = enabled
+            if not enabled:
+                self.target_history.clear()
+                self.last_target_observation = rospy.Time(0)
+                self.stable_candidate = None
+                self.stable_candidate_stamp = rospy.Time(0)
+        if changed:
+            rospy.loginfo("raw stereo semantic inference %s", "enabled" if enabled else "paused")
 
     def on_send_goal(self, _request):
         if self.goal_pub is None:
@@ -430,7 +472,8 @@ class SemanticRawStereoNode(object):
             return
         now = rospy.Time.now()
         with self.lock:
-            if self.busy or (now - self.last_inference).to_sec() < 1.0 / max(self.max_rate, 0.1):
+            if (not self.inference_enabled or self.busy or
+                    (now - self.last_inference).to_sec() < 1.0 / max(self.max_rate, 0.1)):
                 return
             self.busy = True
             self.last_inference = now
@@ -443,10 +486,25 @@ class SemanticRawStereoNode(object):
             with self.lock:
                 self.busy = False
 
-    def select_detection(self, image):
+    def select_detection(self, image, header):
         if isinstance(self.debug_bbox, (list, tuple)) and len(self.debug_bbox) == 4:
             return 1.0, [float(value) for value in self.debug_bbox], "debug_bbox"
-        result = self.model.predict(image, conf=self.confidence, device=self.device, verbose=False)[0]
+        if self.detect_proxy is not None:
+            response = self.detect_proxy(
+                numpy_to_bgr8(image, header), self.target_class, self.confidence
+            )
+            if not response.detected:
+                return None
+            if len(response.bbox_xyxy) != 4:
+                raise ValueError("shared detector returned an invalid bounding box")
+            return (
+                float(response.confidence),
+                [float(value) for value in response.bbox_xyxy],
+                "shared_yolo_world_infra1",
+            )
+        result = self.model.predict(
+            image, conf=self.confidence, device=self.device, verbose=False
+        )[0]
         candidates = []
         for box, score, class_index in zip(result.boxes.xyxy.cpu().tolist(),
                                             result.boxes.conf.cpu().tolist(),
@@ -488,7 +546,7 @@ class SemanticRawStereoNode(object):
             raise ValueError("CameraInfo dimensions do not match the stereo images")
         validate_projection_matrices(self.left_info.P, self.right_info.P)
         left_bgr = cv2.cvtColor(left_raw, cv2.COLOR_GRAY2BGR) if left_raw.ndim == 2 else left_raw
-        selected = self.select_detection(left_bgr)
+        selected = self.select_detection(left_bgr, left_message.header)
         if selected is None:
             rospy.loginfo_throttle(5.0, "YOLO-World found no %s in left infrared image",
                                    self.target_class)
@@ -573,6 +631,10 @@ class SemanticRawStereoNode(object):
         with self.lock:
             self.stable_candidate = None
             self.stable_candidate_stamp = rospy.Time(0)
+        coarse = result["depth_m"] > self.precise_depth
+        if self.last_depth_band != coarse:
+            self.target_history.clear()
+        self.last_depth_band = coarse
         self.target_history.append(point_world.copy())
         jitter = None
         stable = False
@@ -586,17 +648,21 @@ class SemanticRawStereoNode(object):
                 stable_candidate = deepcopy(candidate)
                 (stable_candidate.pose.position.x, stable_candidate.pose.position.y,
                  stable_candidate.pose.position.z) = stable_goal
-                self.stable_pub.publish(stable_candidate)
+                if not coarse:
+                    self.stable_pub.publish(stable_candidate)
                 stable_target_message = PointStamped()
                 stable_target_message.header = target_world_message.header
                 (stable_target_message.point.x, stable_target_message.point.y,
                  stable_target_message.point.z) = stable_target
-                self.stable_world_pub.publish(stable_target_message)
-                with self.lock:
-                    self.stable_candidate = deepcopy(stable_candidate)
-                    self.stable_candidate_stamp = now
+                if coarse:
+                    self.coarse_world_pub.publish(stable_target_message)
+                else:
+                    self.stable_world_pub.publish(stable_target_message)
+                    with self.lock:
+                        self.stable_candidate = deepcopy(stable_candidate)
+                        self.stable_candidate_stamp = now
                 stable = True
-                if self.goal_pub is not None and self.auto_publish_stable_goal:
+                if not coarse and self.goal_pub is not None and self.auto_publish_stable_goal:
                     if (self.last_auto_goal is None or
                             np.linalg.norm(stable_goal - self.last_auto_goal) > self.max_target_jitter):
                         self.goal_pub.publish(stable_candidate)
@@ -619,7 +685,9 @@ class SemanticRawStereoNode(object):
             "body_frame": self.body_frame, "world_frame": self.world_frame,
             "goal_candidate": None if goal is None else goal.tolist(),
             "stable_observations": len(self.target_history),
-            "target_jitter_m": jitter, "stable_goal_available": stable,
+            "target_jitter_m": jitter, "stable_goal_available": stable and not coarse,
+            "localization_quality": "coarse" if coarse else "precise",
+            "stable_coarse_available": stable and coarse,
             "execution_gate_open": bool(self.goal_pub),
             "planner_goal_topic": self.planner_goal_topic,
             "calibration_source": self.calibration_source,

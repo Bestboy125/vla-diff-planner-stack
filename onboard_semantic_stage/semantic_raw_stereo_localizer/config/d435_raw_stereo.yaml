@@ -1,7 +1,9 @@
 # This package never subscribes to a RealSense depth image.
 depth_backend: sgbm
 min_depth: 0.35
-max_depth: 6.0
+# Far measurements are approach-only; near stable measurements authorize orbit.
+max_depth: 30.0
+precise_depth_m: 6.0
 min_disparity_px: 1.0
 max_epipolar_error_px: 1.5
 match_ratio: 0.75

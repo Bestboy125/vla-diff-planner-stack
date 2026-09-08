@@ -1,0 +1,22 @@
+execution_enabled: false
+altitude_reference_z_m: 0.0
+odom_topic: /ekf/ekf_odom
+goal_topic: /goal
+yaw_topic: /planning/yaw
+world_frame: world
+yaw_publish_rate: 20.0
+odom_timeout: 0.5
+max_localization_jump: 1.0
+max_goal_step: 0.8
+max_world_goto_distance: 2.0
+orbit_chord_length: 0.5
+pos_tolerance: 0.22
+pass_tolerance: 0.45
+velocity_tolerance: 0.18
+yaw_tolerance: 0.07
+yaw_rate_tolerance: 0.12
+settle_time: 0.4
+virtual_ground: 0.2
+virtual_ceil: 2.8
+map_min: [-19.0, -14.0, 0.2]
+map_max: [19.0, 14.0, 2.8]

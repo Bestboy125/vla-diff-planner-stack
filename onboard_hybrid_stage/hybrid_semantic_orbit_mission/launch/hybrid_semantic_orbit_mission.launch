@@ -1,0 +1,27 @@
+<launch>
+  <arg name="execution_enabled" default="false"/>
+  <arg name="world_frame" default="world"/>
+  <arg name="body_frame" default="base_link"/>
+  <arg name="odom_topic" default="/ekf/ekf_odom"/>
+  <arg name="fcu_state_topic" default="/mavros/state"/>
+  <arg name="altitude_reference_z_m" default="0.0"/>
+  <arg name="min_operating_altitude" default="0.30"/>
+  <arg name="max_operating_altitude" default="2.0"/>
+
+  <node pkg="hybrid_semantic_orbit_mission"
+        type="hybrid_semantic_orbit_node.py"
+        name="hybrid_semantic_orbit_mission" output="screen" required="true">
+    <rosparam command="load" file="$(find hybrid_semantic_orbit_mission)/config/hybrid_semantic_orbit.yaml"/>
+    <param name="execution_enabled" value="$(arg execution_enabled)"/>
+    <param name="world_frame" value="$(arg world_frame)"/>
+    <param name="body_frame" value="$(arg body_frame)"/>
+    <param name="altitude_reference_z_m" value="$(arg altitude_reference_z_m)"/>
+    <param name="min_operating_altitude" value="$(arg min_operating_altitude)"/>
+    <param name="max_operating_altitude" value="$(arg max_operating_altitude)"/>
+    <remap from="~odom" to="$(arg odom_topic)"/>
+    <remap from="~fcu_state" to="$(arg fcu_state_topic)"/>
+    <remap from="~request" to="/vla_diff_bridge/hybrid_semantic_orbit_request"/>
+    <remap from="~cancel" to="/vla_diff_bridge/hybrid_semantic_orbit_cancel"/>
+    <remap from="~hover_stop" to="/vla_hover_stop_to_planner"/>
+  </node>
+</launch>

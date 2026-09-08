@@ -8,9 +8,17 @@
   <arg name="world_frame" default="world"/>
   <arg name="body_frame" default="base_link"/>
   <arg name="allow_empty_odom_child_frame" default="true"/>
+  <arg name="altitude_reference_z_m" default="0.0"/>
+  <arg name="min_operating_altitude" default="0.30"/>
+  <arg name="max_operating_altitude" default="2.0"/>
+  <arg name="max_approach_leg" default="2.0"/>
+  <arg name="max_approach_stages" default="20"/>
+  <arg name="approach_timeout" default="60.0"/>
   <arg name="target_class" default="person"/>
   <arg name="confidence" default="0.20"/>
   <arg name="depth_backend" default="sgbm"/>
+  <arg name="detector_backend" default="local"/>
+  <arg name="detector_service" default="/shared_yolo_world_detector/detect"/>
   <arg name="semantic_orbit_execution_enabled" default="false"/>
   <arg name="start_realsense" default="true"/>
 
@@ -41,11 +49,19 @@
     <arg name="target_class" value="$(arg target_class)"/>
     <arg name="confidence" value="$(arg confidence)"/>
     <arg name="depth_backend" value="$(arg depth_backend)"/>
+    <arg name="detector_backend" value="$(arg detector_backend)"/>
+    <arg name="detector_service" value="$(arg detector_service)"/>
   </include>
 
   <include file="$(find semantic_raw_stereo_localizer)/launch/semantic_orbit_executor.launch">
     <arg name="execution_enabled" value="$(arg semantic_orbit_execution_enabled)"/>
     <arg name="world_frame" value="$(arg world_frame)"/>
     <arg name="odom_topic" value="$(arg odom_topic)"/>
+    <arg name="altitude_reference_z_m" value="$(arg altitude_reference_z_m)"/>
+    <arg name="min_operating_altitude" value="$(arg min_operating_altitude)"/>
+    <arg name="max_operating_altitude" value="$(arg max_operating_altitude)"/>
+    <arg name="max_approach_leg" value="$(arg max_approach_leg)"/>
+    <arg name="max_approach_stages" value="$(arg max_approach_stages)"/>
+    <arg name="approach_timeout" value="$(arg approach_timeout)"/>
   </include>
 </launch>

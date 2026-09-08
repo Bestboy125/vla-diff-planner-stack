@@ -1,0 +1,9 @@
+sensor_msgs/Image image
+string target_label
+float32 confidence_threshold
+---
+bool detected
+string detail
+string label
+float32 confidence
+float32[] bbox_xyxy

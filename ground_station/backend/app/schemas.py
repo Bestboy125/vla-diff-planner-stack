@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from enum import Enum
 import re
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -56,11 +56,19 @@ class EmbodiedTaskName(str, Enum):
     ORBIT_TARGET = "orbit_target"
     PASS_TARGET_FORWARD = "pass_target_forward"
     SEMANTIC_ORBIT = "semantic_orbit"
+    MONOCULAR_SEMANTIC_ORBIT = "monocular_semantic_orbit"
+    SEMANTIC_SCAN_ORBIT = "semantic_scan_orbit"
+    HYBRID_SEMANTIC_ORBIT = "hybrid_semantic_orbit"
 
 
 class OrbitDirection(str, Enum):
     CLOCKWISE = "clockwise"
     COUNTERCLOCKWISE = "counterclockwise"
+
+
+class BaselineDirection(str, Enum):
+    LEFT = "left"
+    RIGHT = "right"
 
 
 class MissionCreate(BaseModel):
@@ -89,6 +97,10 @@ class TaskParameters(BaseModel):
     center_y_m: float = Field(default=0.0, ge=-1000.0, le=1000.0)
     center_z_m: float = Field(default=1.0, ge=-100.0, le=100.0)
     extra_distance_m: float = Field(default=2.0, ge=0.2, le=5.0)
+    # Planned lateral displacement from capture A to capture B.  The onboard
+    # executor still validates the measured camera baseline from Fast-LIO/EKF.
+    baseline_distance_m: float = Field(default=0.6, ge=0.5, le=1.0)
+    baseline_direction: BaselineDirection = BaselineDirection.RIGHT
 
     @field_validator("target_label")
     @classmethod
@@ -129,17 +141,35 @@ class TaskDispatchRequest(BaseModel):
                 EmbodiedTaskName.ORBIT_TARGET,
                 EmbodiedTaskName.PASS_TARGET_FORWARD,
                 EmbodiedTaskName.SEMANTIC_ORBIT,
+                EmbodiedTaskName.MONOCULAR_SEMANTIC_ORBIT,
+                EmbodiedTaskName.SEMANTIC_SCAN_ORBIT,
+                EmbodiedTaskName.HYBRID_SEMANTIC_ORBIT,
             } and not self.parameters.target_label:
                 raise ValueError("the selected embodied task requires target_label")
-            if self.embodied_task == EmbodiedTaskName.SEMANTIC_ORBIT:
+            if self.embodied_task in {
+                EmbodiedTaskName.SEMANTIC_ORBIT,
+                EmbodiedTaskName.MONOCULAR_SEMANTIC_ORBIT,
+                EmbodiedTaskName.SEMANTIC_SCAN_ORBIT,
+                EmbodiedTaskName.HYBRID_SEMANTIC_ORBIT,
+            }:
                 if re.fullmatch(r"[A-Za-z][A-Za-z-]{0,31}", self.parameters.target_label) is None:
                     raise ValueError(
-                        "semantic_orbit target_label must be one English word (letters and optional hyphens)"
+                        "semantic orbit target_label must be one English word (letters and optional hyphens)"
                     )
                 if abs(self.parameters.radius_m - 1.5) > 1e-6:
-                    raise ValueError("semantic_orbit radius_m is fixed at 1.5")
+                    raise ValueError("semantic orbit radius_m is fixed at 1.5")
                 if abs(self.parameters.laps - 1.0) > 1e-6:
-                    raise ValueError("semantic_orbit laps is fixed at 1")
+                    raise ValueError("semantic orbit laps is fixed at 1")
+                if self.embodied_task == EmbodiedTaskName.SEMANTIC_SCAN_ORBIT:
+                    if self.parameters.target_label.lower() != "chair":
+                        raise ValueError("semantic scan interrupt target is fixed at chair")
+                    if self.parameters.orbit_direction != OrbitDirection.CLOCKWISE:
+                        raise ValueError("semantic scan chair orbit is fixed clockwise")
+                if (
+                    self.embodied_task == EmbodiedTaskName.HYBRID_SEMANTIC_ORBIT
+                    and self.parameters.orbit_direction != OrbitDirection.CLOCKWISE
+                ):
+                    raise ValueError("hybrid semantic orbit is fixed clockwise")
         return self
 
 
@@ -284,6 +314,24 @@ class OnboardObservation(BaseModel):
             self.body_from_camera is not None or self.calibration_validated
         ):
             raise ValueError("image_odom must omit extrinsics and cannot claim full calibration")
+        return self
+
+
+class OnboardTaskStatus(BaseModel):
+    schema_version: Literal[1] = 1
+    type: Literal["onboard_task_status"] = "onboard_task_status"
+    vehicle_id: str = Field(min_length=1, max_length=64)
+    sequence: int = Field(ge=0)
+    status: dict[str, Any]
+
+    @model_validator(mode="after")
+    def validate_status_contract(self):
+        task_id = self.status.get("task_id")
+        state = self.status.get("status")
+        if not isinstance(task_id, str) or not task_id or len(task_id) > 128:
+            raise ValueError("onboard task status requires a valid task_id")
+        if not isinstance(state, str) or not state or len(state) > 64:
+            raise ValueError("onboard task status requires a valid status")
         return self
 
 

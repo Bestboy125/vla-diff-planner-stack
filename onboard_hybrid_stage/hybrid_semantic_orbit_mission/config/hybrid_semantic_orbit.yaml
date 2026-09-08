@@ -1,0 +1,12 @@
+# Far-to-near handoff contract. D435 retains its independent 6 m quality gate.
+d435_handoff_distance_m: 4.0
+max_coarse_target_range_m: 50.0
+max_approach_leg_m: 2.0
+max_approach_stages: 30
+approach_timeout: 60.0
+odom_timeout: 0.30
+
+# Fixed final orbit contract.
+orbit_radius_m: 1.5
+orbit_laps: 1.0
+orbit_direction: clockwise

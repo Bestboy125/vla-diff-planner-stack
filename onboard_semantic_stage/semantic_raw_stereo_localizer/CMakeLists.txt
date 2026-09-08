@@ -9,6 +9,7 @@ find_package(catkin REQUIRED COMPONENTS
   nav_msgs
   rospy
   sensor_msgs
+  shared_yolo_world_detector
   std_msgs
   std_srvs
 )

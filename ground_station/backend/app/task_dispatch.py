@@ -9,7 +9,14 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from .mission import MissionManager
-from .onboard_bridge import OnboardBridgeClient, build_operator_task, build_semantic_orbit_task
+from .onboard_bridge import (
+    OnboardBridgeClient,
+    build_hybrid_semantic_orbit_task,
+    build_monocular_semantic_orbit_task,
+    build_operator_task,
+    build_semantic_scan_orbit_task,
+    build_semantic_orbit_task,
+)
 from .schemas import (
     AtomicTaskName,
     EmbodiedTaskName,
@@ -61,6 +68,7 @@ class TaskDispatcher:
         self._lock = asyncio.Lock()
         self._sequence = 0
         self._history: list[dict[str, Any]] = []
+        self._pending_runtime: dict[str, dict[str, Any]] = {}
 
     def catalog(self) -> dict[str, Any]:
         return {
@@ -76,6 +84,18 @@ class TaskDispatcher:
                     "label": "YOLO-World 语义目标接近并绕飞",
                 },
                 {
+                    "name": EmbodiedTaskName.MONOCULAR_SEMANTIC_ORBIT.value,
+                    "label": "D435 左目双位置语义目标绕飞",
+                },
+                {
+                    "name": EmbodiedTaskName.SEMANTIC_SCAN_ORBIT.value,
+                    "label": "world X 6 米、+Y 展开 10 米，扫描椅子绕飞并续扫",
+                },
+                {
+                    "name": EmbodiedTaskName.HYBRID_SEMANTIC_ORBIT.value,
+                    "label": "D435 左目远距粗定位 + 双目近距精定位绕飞",
+                },
+                {
                     "name": EmbodiedTaskName.PASS_TARGET_FORWARD.value,
                     "label": "飞过目标后继续前进",
                 },
@@ -87,6 +107,7 @@ class TaskDispatcher:
                 "radius_m": [0.5, 5.0],
                 "laps": [0.25, 3.0],
                 "extra_distance_m": [0.2, 5.0],
+                "baseline_distance_m": [0.5, 1.0],
             },
             "control_output_enabled": self.control_output_enabled,
             "live_confirmation_phrase": self.live_control_confirmation,
@@ -102,6 +123,9 @@ class TaskDispatcher:
         else:
             result = await self._dispatch_embodied(request)
         async with self._lock:
+            pending = self._pending_runtime.pop(result["task_id"], None)
+            if pending is not None:
+                result["runtime"] = pending
             self._history.insert(0, result)
             del self._history[20:]
         return result
@@ -112,6 +136,28 @@ class TaskDispatcher:
                 "control_output_enabled": self.control_output_enabled,
                 "recent_tasks": [dict(item) for item in self._history[:8]],
             }
+
+    async def ingest_onboard_status(self, status: dict[str, Any]) -> dict[str, Any]:
+        task_id = str(status["task_id"])
+        runtime = {
+            "status": status["status"],
+            "detail": status.get("detail", ""),
+            "semantic_state": status.get("semantic_state"),
+            "semantic_executor": status.get("semantic_executor"),
+            "updated_unix_ms": int(status.get("time_unix_ms", time.time() * 1000)),
+            "payload": status.get("semantic_payload"),
+        }
+        async with self._lock:
+            for item in self._history:
+                if item.get("task_id") == task_id:
+                    item["runtime"] = runtime
+                    break
+            else:
+                self._pending_runtime[task_id] = runtime
+                if len(self._pending_runtime) > 32:
+                    oldest = next(iter(self._pending_runtime))
+                    self._pending_runtime.pop(oldest, None)
+        return {"status": "accepted", "task_id": task_id}
 
     def _require_live_authorization(
         self, request: TaskDispatchRequest, operator_token: str | None
@@ -187,6 +233,12 @@ class TaskDispatcher:
     async def _dispatch_embodied(self, request: TaskDispatchRequest) -> dict[str, Any]:
         if request.embodied_task == EmbodiedTaskName.SEMANTIC_ORBIT:
             return await self._dispatch_semantic_orbit(request)
+        if request.embodied_task == EmbodiedTaskName.MONOCULAR_SEMANTIC_ORBIT:
+            return await self._dispatch_monocular_semantic_orbit(request)
+        if request.embodied_task == EmbodiedTaskName.SEMANTIC_SCAN_ORBIT:
+            return await self._dispatch_semantic_scan_orbit(request)
+        if request.embodied_task == EmbodiedTaskName.HYBRID_SEMANTIC_ORBIT:
+            return await self._dispatch_hybrid_semantic_orbit(request)
         instruction = self._compose_embodied_instruction(request)
         mission = await self.mission_manager.create(
             MissionCreate(instruction=instruction, policy=request.policy, mode=request.mode)
@@ -239,6 +291,121 @@ class TaskDispatcher:
             "category": request.category.value,
             "task": EmbodiedTaskName.SEMANTIC_ORBIT.value,
             "label": "YOLO-World + raw stereo + Diff-Planner 语义绕飞",
+            "mode": request.mode.value,
+            "created_unix_ms": int(time.time() * 1000),
+            "command": command,
+            "delivery": delivery,
+        }
+
+    async def _dispatch_monocular_semantic_orbit(self, request: TaskDispatchRequest) -> dict[str, Any]:
+        task_id = str(uuid4())
+        async with self._lock:
+            sequence = self._sequence
+            self._sequence += 1
+        command = build_monocular_semantic_orbit_task(
+            task_id=task_id,
+            sequence=sequence,
+            target_label=request.parameters.target_label,
+            ttl_ms=self.command_ttl_ms,
+            world_frame=self.world_frame,
+            body_frame=self.body_frame,
+            direction=request.parameters.orbit_direction.value,
+            baseline_distance_m=request.parameters.baseline_distance_m,
+            baseline_direction=request.parameters.baseline_direction.value,
+        )
+        if request.mode == MissionMode.DRY_RUN:
+            delivery = {
+                "status": "safety_locked",
+                "detail": (
+                    "Two-position D435-left capture, measured-pose triangulation and fixed "
+                    "1.5 m orbit were validated; nothing was sent because mode=dry_run."
+                ),
+            }
+        else:
+            try:
+                delivery = await self.onboard_bridge.send(command)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {
+            "task_id": task_id,
+            "category": request.category.value,
+            "task": EmbodiedTaskName.MONOCULAR_SEMANTIC_ORBIT.value,
+            "label": "YOLO-World + D435 左目双位置 + Diff-Planner 语义绕飞",
+            "mode": request.mode.value,
+            "created_unix_ms": int(time.time() * 1000),
+            "command": command,
+            "delivery": delivery,
+        }
+
+    async def _dispatch_semantic_scan_orbit(self, request: TaskDispatchRequest) -> dict[str, Any]:
+        task_id = str(uuid4())
+        async with self._lock:
+            sequence = self._sequence
+            self._sequence += 1
+        command = build_semantic_scan_orbit_task(
+            task_id=task_id,
+            sequence=sequence,
+            ttl_ms=self.command_ttl_ms,
+            world_frame=self.world_frame,
+            body_frame=self.body_frame,
+        )
+        if request.mode == MissionMode.DRY_RUN:
+            delivery = {
+                "status": "safety_locked",
+                "detail": (
+                    "Fixed 6 x 10 m five-sweep scan, immediate chair stop, verified D435 "
+                    "clockwise orbit and route resume were validated; nothing was sent."
+                ),
+            }
+        else:
+            try:
+                delivery = await self.onboard_bridge.send(command)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {
+            "task_id": task_id,
+            "category": request.category.value,
+            "task": EmbodiedTaskName.SEMANTIC_SCAN_ORBIT.value,
+            "label": "Diff-Planner 扫描 + D435 椅子检测绕飞 + 断点续扫",
+            "mode": request.mode.value,
+            "created_unix_ms": int(time.time() * 1000),
+            "command": command,
+            "delivery": delivery,
+        }
+
+    async def _dispatch_hybrid_semantic_orbit(self, request: TaskDispatchRequest) -> dict[str, Any]:
+        task_id = str(uuid4())
+        async with self._lock:
+            sequence = self._sequence
+            self._sequence += 1
+        command = build_hybrid_semantic_orbit_task(
+            task_id=task_id,
+            sequence=sequence,
+            target_label=request.parameters.target_label,
+            ttl_ms=self.command_ttl_ms,
+            world_frame=self.world_frame,
+            body_frame=self.body_frame,
+            baseline_distance_m=request.parameters.baseline_distance_m,
+            baseline_direction=request.parameters.baseline_direction.value,
+        )
+        if request.mode == MissionMode.DRY_RUN:
+            delivery = {
+                "status": "safety_locked",
+                "detail": (
+                    "Shared YOLO, D435-left coarse localization, bounded Diff-Planner "
+                    "approach, stereo refinement and fixed orbit were validated; nothing was sent."
+                ),
+            }
+        else:
+            try:
+                delivery = await self.onboard_bridge.send(command)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {
+            "task_id": task_id,
+            "category": request.category.value,
+            "task": EmbodiedTaskName.HYBRID_SEMANTIC_ORBIT.value,
+            "label": "共享 YOLO + D435 左目远距粗定位 + 双目精定位绕飞",
             "mode": request.mode.value,
             "created_unix_ms": int(time.time() * 1000),
             "command": command,

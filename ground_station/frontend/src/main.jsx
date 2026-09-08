@@ -53,6 +53,8 @@ function App() {
   const [centerY, setCenterY] = useState(0);
   const [centerZ, setCenterZ] = useState(1);
   const [extraDistance, setExtraDistance] = useState(2);
+  const [baselineDistance, setBaselineDistance] = useState(0.6);
+  const [baselineDirection, setBaselineDirection] = useState("right");
   const [operatorToken, setOperatorToken] = useState("");
   const [liveConfirmation, setLiveConfirmation] = useState("");
   const [testPreviewUrl, setTestPreviewUrl] = useState("");
@@ -67,6 +69,10 @@ function App() {
   const missionState = mission?.state || "IDLE";
   const liveReady = mode === "live" && !system.safety_lock;
   const displayedImage = onboard.connected ? "/api/onboard/stream.mjpeg" : testPreviewUrl;
+  const scanMissionSelected = embodiedTask === "semantic_scan_orbit";
+  const hybridMissionSelected = embodiedTask === "hybrid_semantic_orbit";
+  const semanticOrbitSelected = ["semantic_orbit", "monocular_semantic_orbit", "semantic_scan_orbit", "hybrid_semantic_orbit"].includes(embodiedTask);
+  const latestTask = system.task_runtime?.recent_tasks?.[0];
 
   const appendChat = (role, text) => setChat((current) => [...current, { role, text, time: new Date() }].slice(-30));
 
@@ -108,6 +114,9 @@ function App() {
       if (atomicTask === "orbit_world") return `${selected?.[1]}：圆心 (${centerX}, ${centerY}, ${centerZ}) m，半径 ${radius} m，${orbitDirection === "clockwise" ? "顺时针" : "逆时针"} ${laps} 圈`;
       return `${selected?.[1]} ${distance} m`;
     }
+    if (embodiedTask === "semantic_scan_orbit") return "从当前位置沿 world +X 扫描 6 m，向 +Y 展开 5 条，间距 2.5 m、总宽 10 m；机头沿每段前进方向，发现 chair 后顺时针 1.5 m 绕飞一圈再续扫";
+    if (embodiedTask === "hybrid_semantic_orbit") return `共享 YOLO 检测 ${targetLabel}，${baselineDirection === "right" ? "右移" : "左移"} ${baselineDistance} m，使用 D435 左目双位置粗定位，Diff-Planner 分阶段靠近，双目精定位后顺时针 1.5 m 绕飞 1 圈`;
+    if (embodiedTask === "monocular_semantic_orbit") return `D435 左目双位置检测 ${targetLabel}，${baselineDirection === "right" ? "右移" : "左移"} ${baselineDistance} m 获取实测基线后，以 1.5 m 半径${orbitDirection === "clockwise" ? "顺时针" : "逆时针"}绕飞 1 圈`;
     if (embodiedTask === "semantic_orbit") return `YOLO-World 检测 ${targetLabel}，在当前高度以 1.5 m 半径${orbitDirection === "clockwise" ? "顺时针" : "逆时针"}绕飞 1 圈`;
     if (embodiedTask === "orbit_target") return `以 ${radius} m 半径${orbitDirection === "clockwise" ? "顺时针" : "逆时针"}绕 ${targetLabel} 飞行 ${laps} 圈`;
     if (embodiedTask === "pass_target_forward") return `飞过 ${targetLabel} 后继续前进 ${extraDistance} m`;
@@ -127,10 +136,11 @@ function App() {
         instruction, policy, mode, live_confirmation: liveConfirmation,
         parameters: {
           distance_m: distance, takeoff_height_m: takeoffHeight, yaw_deg: yawDeg,
-          target_label: targetLabel,
-          radius_m: embodiedTask === "semantic_orbit" ? 1.5 : radius,
-          laps: embodiedTask === "semantic_orbit" ? 1 : laps,
-          orbit_direction: orbitDirection, extra_distance_m: extraDistance,
+          target_label: scanMissionSelected ? "chair" : targetLabel,
+          radius_m: semanticOrbitSelected ? 1.5 : radius,
+          laps: semanticOrbitSelected ? 1 : laps,
+          orbit_direction: (scanMissionSelected || hybridMissionSelected) ? "clockwise" : orbitDirection, extra_distance_m: extraDistance,
+          baseline_distance_m: baselineDistance, baseline_direction: baselineDirection,
           center_x_m: centerX, center_y_m: centerY, center_z_m: centerZ,
         },
       }),
@@ -227,20 +237,24 @@ function App() {
             <div className="template-row">
               <button className={embodiedTask === "freeform" ? "selected" : ""} onClick={() => setEmbodiedTask("freeform")}>自由指令</button>
               <button className={embodiedTask === "semantic_orbit" ? "selected" : ""} onClick={() => { setEmbodiedTask("semantic_orbit"); setTargetLabel("chair"); }}>语义检测绕飞</button>
+              <button className={embodiedTask === "monocular_semantic_orbit" ? "selected" : ""} onClick={() => { setEmbodiedTask("monocular_semantic_orbit"); setTargetLabel("chair"); }}>D435 左目双位置绕飞</button>
+              <button className={embodiedTask === "semantic_scan_orbit" ? "selected" : ""} onClick={() => { setEmbodiedTask("semantic_scan_orbit"); setTargetLabel("chair"); setOrbitDirection("clockwise"); }}>扫描椅子并绕飞</button>
+              <button className={embodiedTask === "hybrid_semantic_orbit" ? "selected" : ""} onClick={() => { setEmbodiedTask("hybrid_semantic_orbit"); setTargetLabel("chair"); setOrbitDirection("clockwise"); }}>远近融合绕飞</button>
               <button className={embodiedTask === "orbit_target" ? "selected" : ""} onClick={() => setEmbodiedTask("orbit_target")}>VLA 绕目标</button>
               <button className={embodiedTask === "pass_target_forward" ? "selected" : ""} onClick={() => setEmbodiedTask("pass_target_forward")}>飞过后前进</button>
             </div>
             {embodiedTask === "freeform" ? <textarea className="instruction-box" value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="输入要完成的具身目标……" /> : <>
-              <label className="text-field"><span>{embodiedTask === "semantic_orbit" ? "YOLO-World 英文目标词" : "目标名称"}</span><input value={targetLabel} onChange={(event) => setTargetLabel(event.target.value)} pattern={embodiedTask === "semantic_orbit" ? "[A-Za-z][A-Za-z-]{0,31}" : undefined} placeholder={embodiedTask === "semantic_orbit" ? "例如：chair、person、bottle" : "例如：椅子、电线杆、红色箱子"} /></label>
-              {embodiedTask === "semantic_orbit" ? <div className="parameter-grid"><div className="numeric-field"><span>固定任务参数</span><div>半径 1.5 m · 1 圈 · 保持当前高度</div><small>板载 YOLO-World + 原始双目三角化定位；原子绕飞技能先生成圆周入口点，再交由 Diff-Planner。</small></div><label className="numeric-field"><span>方向</span><select value={orbitDirection} onChange={(event) => setOrbitDirection(event.target.value)}><option value="clockwise">顺时针</option><option value="counterclockwise">逆时针</option></select></label></div> : embodiedTask === "orbit_target" ? <div className="parameter-grid"><NumericField label="绕飞半径" value={radius} setValue={setRadius} min="0.5" max="5" step="0.1" unit="m" /><NumericField label="圈数" value={laps} setValue={setLaps} min="0.25" max="3" step="0.25" unit="圈" /><label className="numeric-field"><span>方向</span><select value={orbitDirection} onChange={(event) => setOrbitDirection(event.target.value)}><option value="clockwise">顺时针</option><option value="counterclockwise">逆时针</option></select></label></div> : <div className="parameter-grid"><NumericField label="通过后继续前进" value={extraDistance} setValue={setExtraDistance} min="0.2" max="5" step="0.1" unit="m" /></div>}
+              <label className="text-field"><span>{scanMissionSelected ? "固定检测目标" : semanticOrbitSelected ? "YOLO-World 英文目标词" : "目标名称"}</span><input value={scanMissionSelected ? "chair" : targetLabel} disabled={scanMissionSelected} onChange={(event) => setTargetLabel(event.target.value)} pattern={semanticOrbitSelected ? "[A-Za-z][A-Za-z-]{0,31}" : undefined} placeholder={semanticOrbitSelected ? "例如：chair、person、bottle" : "例如：椅子、电线杆、红色箱子"} /></label>
+              {semanticOrbitSelected ? <div className="parameter-grid"><div className="numeric-field"><span>固定任务参数</span><div>{scanMissionSelected ? "world +X 首段 6 m · +Y 展宽 10 m · 5 条 / 间距 2.5 m" : hybridMissionSelected ? "D435 左目粗定位 · 4 m 双目交接 · 顺时针 1.5 m 绕飞 1 圈" : "半径 1.5 m · 1 圈 · 保持当前高度"}</div><small>{scanMissionSelected ? "从任务开始位置沿 world X 轴往返，每条 6 m，向 +Y 换行；yaw 跟随每段前进方向。发现 chair 后顺时针 1.5 m 绕飞一圈，再返回原航线续扫。" : hybridMissionSelected ? "共享一份 YOLO 模型；先用 D435 左目在两个位置估计远距离目标，每次最多 2 m 分阶段靠近，进入约 4 m 范围后丢弃粗圆心并用左右双目重新精定位，再执行双目绕飞。" : embodiedTask === "monocular_semantic_orbit" ? "使用 D435 校正左视图先拍摄 A 图，再按参数向左或向右横移 0.5–1.0 m 并拍摄 B 图；使用 Fast-LIO 实测基线和 SuperPoint/LightGlue 估计 50 m 内候选目标，只有通过几何质量门限才会交给 Diff-Planner。" : "板载 YOLO-World + 原始双目三角化定位；原子绕飞技能先生成圆周入口点，再交由 Diff-Planner。"}</small></div>{["monocular_semantic_orbit", "hybrid_semantic_orbit"].includes(embodiedTask) && <><NumericField label="第二次横移位移" value={baselineDistance} setValue={setBaselineDistance} min="0.5" max="1" step="0.05" unit="m" /><label className="numeric-field"><span>第二次横移方向</span><select value={baselineDirection} onChange={(event) => setBaselineDirection(event.target.value)}><option value="right">向右横移</option><option value="left">向左横移</option></select></label></>}{!scanMissionSelected && !hybridMissionSelected && <label className="numeric-field"><span>绕飞方向</span><select value={orbitDirection} onChange={(event) => setOrbitDirection(event.target.value)}><option value="clockwise">顺时针</option><option value="counterclockwise">逆时针</option></select></label>}</div> : embodiedTask === "orbit_target" ? <div className="parameter-grid"><NumericField label="绕飞半径" value={radius} setValue={setRadius} min="0.5" max="5" step="0.1" unit="m" /><NumericField label="圈数" value={laps} setValue={setLaps} min="0.25" max="3" step="0.25" unit="圈" /><label className="numeric-field"><span>方向</span><select value={orbitDirection} onChange={(event) => setOrbitDirection(event.target.value)}><option value="clockwise">顺时针</option><option value="counterclockwise">逆时针</option></select></label></div> : <div className="parameter-grid"><NumericField label="通过后继续前进" value={extraDistance} setValue={setExtraDistance} min="0.2" max="5" step="0.1" unit="m" /></div>}
             </>}
           </>}
 
-          <div className="dispatch-settings">{embodiedTask === "semantic_orbit" && category === "embodied" ? <label><span>板载流水线</span><div>YOLO-World → stereo → Diff-Planner → atomic ORBIT</div></label> : <label><span>策略</span><select value={policy} onChange={(event) => setPolicy(event.target.value)}><option value="openvla">OpenVLA 3ep</option><option value="pi05">π0.5 1ep</option></select></label>}<label><span>模式</span><select value={mode} onChange={(event) => setMode(event.target.value)}><option value="dry_run">Dry-run（不下发）</option><option value="live">Live（实机）</option></select></label></div>
+          <div className="dispatch-settings">{semanticOrbitSelected && category === "embodied" ? <label><span>板载流水线</span><div>{scanMissionSelected ? "曲线扫描 → 持续 D435 YOLO → 停车 → 双目绕飞 → 断点续扫" : hybridMissionSelected ? "共享 YOLO → D435 左目 A/B 粗定位 → 分段靠近 → 双目重定位 → 双目绕飞" : embodiedTask === "monocular_semantic_orbit" ? "YOLO-World → D435 左目 A/B 拍摄 → 实测基线三角化 → Diff-Planner → ORBIT" : "YOLO-World → D435 stereo → Diff-Planner → ORBIT"}</div></label> : <label><span>策略</span><select value={policy} onChange={(event) => setPolicy(event.target.value)}><option value="openvla">OpenVLA 3ep</option><option value="pi05">π0.5 1ep</option></select></label>}<label><span>模式</span><select value={mode} onChange={(event) => setMode(event.target.value)}><option value="dry_run">Dry-run（不下发）</option><option value="live">Live（实机）</option></select></label></div>
           {mode === "live" && <div className="live-gate"><strong>实机双重确认</strong><input type="password" value={operatorToken} onChange={(event) => setOperatorToken(event.target.value)} placeholder="操作令牌" /><input value={liveConfirmation} onChange={(event) => setLiveConfirmation(event.target.value)} placeholder="输入主机配置的确认短语" /><small>{liveReady ? "主机输出开关已开启，仍需机载桥开关。" : "主机输出锁尚未开启，本请求会被拒绝。"}</small></div>}
           <button className={`dispatch-button ${mode}`} disabled={busy} onClick={dispatchTask}>{busy ? "处理中……" : mode === "live" ? "确认并下发实机任务" : "提交 Dry-run 任务"}</button>
           <div className="mission-actions"><button disabled={busy || missionState !== "RUNNING"} onClick={() => missionCommand("hold")}>暂停 VLA</button><button disabled={busy || !mission || ["ABORTED", "SUCCEEDED", "FAULT"].includes(missionState)} onClick={() => missionCommand("stop")}>停止任务</button><button disabled={busy || !imageBase64} onClick={inferTestFrame}>离线单帧推理</button><button disabled={busy || !onboard.connected || onboard.diagnostic_busy || missionState === "RUNNING"} onClick={inferLatestFrame}>实时帧推理（不下发）</button></div>
           {mission && <div className="mission-id"><span>当前任务</span><code>{mission.mission_id}</code><p>{mission.status_message}</p></div>}
+          {latestTask && <div className="mission-id"><span>最近板载任务状态</span><code>{latestTask.task_id?.slice(0, 8)} · {latestTask.runtime?.semantic_state || latestTask.delivery?.status}</code><p>{latestTask.runtime?.detail || latestTask.delivery?.detail}</p></div>}
         </article>
         {onboard.observation_mode === "image_odom" && <article className="safety-note"><span>图像 + 里程计测试模式</span><p>当前未使用相机安装外参，不支持依赖外参的目标三维定位。FAST-LIO/EKF、时间检查及航点过期剔除仍然有效；calibration_validated=false 表示未声明完整外参标定，不会阻断本模式。</p></article>}
         <article className="safety-note"><span>安全边界</span><p>网页默认只做轨迹预览。Live 请求必须同时通过主机输出开关、操作令牌、确认短语和机载发布开关；本页面不会发送 MAVROS 解锁或飞控模式切换命令。</p></article>

@@ -127,6 +127,113 @@ def build_semantic_orbit_task(
     }
 
 
+def build_monocular_semantic_orbit_task(
+    task_id: str,
+    sequence: int,
+    target_label: str,
+    ttl_ms: int,
+    world_frame: str,
+    body_frame: str,
+    direction: str,
+    baseline_distance_m: float,
+    baseline_direction: str,
+) -> dict[str, Any]:
+    """Build a request for the independent two-position monocular workflow."""
+    return {
+        "schema_version": 3,
+        "type": "operator_task",
+        "task_id": task_id,
+        "sequence": sequence,
+        "sent_at_unix_ms": int(time.time() * 1000),
+        "ttl_ms": ttl_ms,
+        "command": "MONOCULAR_SEMANTIC_ORBIT",
+        "frame_id": world_frame,
+        "body_frame_id": body_frame,
+        "magnitude": 1.5,
+        "magnitude_unit": "m",
+        "monocular_semantic_orbit": {
+            "target_label": target_label.lower(),
+            "radius_m": 1.5,
+            "laps": 1.0,
+            "direction": direction,
+            "yaw_mode": "face_center",
+            "keep_current_altitude": True,
+            "baseline_distance_m": baseline_distance_m,
+            "baseline_direction": baseline_direction,
+        },
+    }
+
+
+def build_semantic_scan_orbit_task(
+    task_id: str,
+    sequence: int,
+    ttl_ms: int,
+    world_frame: str,
+    body_frame: str,
+) -> dict[str, Any]:
+    """Build the fixed D435 chair scan-interrupt-orbit-resume mission request."""
+    return {
+        "schema_version": 3,
+        "type": "operator_task",
+        "task_id": task_id,
+        "sequence": sequence,
+        "sent_at_unix_ms": int(time.time() * 1000),
+        "ttl_ms": ttl_ms,
+        "command": "SEMANTIC_SCAN_ORBIT",
+        "frame_id": world_frame,
+        "body_frame_id": body_frame,
+        "magnitude": 1.5,
+        "magnitude_unit": "m",
+        "semantic_scan_orbit": {
+            "target_label": "chair",
+            "scan_width_m": 6.0,
+            "scan_length_m": 10.0,
+            "sweep_count": 5,
+            "radius_m": 1.5,
+            "laps": 1.0,
+            "direction": "clockwise",
+            "yaw_mode": "face_center",
+            "keep_current_altitude": True,
+        },
+    }
+
+
+def build_hybrid_semantic_orbit_task(
+    task_id: str,
+    sequence: int,
+    target_label: str,
+    ttl_ms: int,
+    world_frame: str,
+    body_frame: str,
+    baseline_distance_m: float,
+    baseline_direction: str,
+) -> dict[str, Any]:
+    """Build the monocular-coarse to D435-refined semantic orbit request."""
+    return {
+        "schema_version": 3,
+        "type": "operator_task",
+        "task_id": task_id,
+        "sequence": sequence,
+        "sent_at_unix_ms": int(time.time() * 1000),
+        "ttl_ms": ttl_ms,
+        "command": "HYBRID_SEMANTIC_ORBIT",
+        "frame_id": world_frame,
+        "body_frame_id": body_frame,
+        "magnitude": 1.5,
+        "magnitude_unit": "m",
+        "hybrid_semantic_orbit": {
+            "target_label": target_label.lower(),
+            "radius_m": 1.5,
+            "laps": 1.0,
+            "direction": "clockwise",
+            "yaw_mode": "face_center",
+            "keep_current_altitude": True,
+            "baseline_distance_m": baseline_distance_m,
+            "baseline_direction": baseline_direction,
+        },
+    }
+
+
 class OnboardBridgeClient:
     def __init__(self, host: str, port: int, token: str, timeout_sec: float = 1.0) -> None:
         self.host = host

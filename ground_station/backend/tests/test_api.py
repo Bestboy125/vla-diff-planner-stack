@@ -200,6 +200,174 @@ def test_semantic_orbit_rejects_non_english_or_multiword_target() -> None:
         assert response.status_code == 422
 
 
+def test_monocular_semantic_orbit_dry_run_builds_separate_two_capture_command(monkeypatch) -> None:
+    async def forbidden_send(_command):
+        raise AssertionError("monocular dry-run must not contact the onboard bridge")
+
+    monkeypatch.setattr(task_dispatcher.onboard_bridge, "send", forbidden_send)
+    response = client.post(
+        "/api/tasks/dispatch",
+        json={
+            "category": "embodied",
+            "embodied_task": "monocular_semantic_orbit",
+            "mode": "dry_run",
+            "parameters": {
+                "target_label": "chair",
+                "radius_m": 1.5,
+                "laps": 1,
+                "orbit_direction": "counterclockwise",
+                "baseline_distance_m": 0.6,
+                "baseline_direction": "right",
+            },
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["delivery"]["status"] == "safety_locked"
+    assert payload["command"]["command"] == "MONOCULAR_SEMANTIC_ORBIT"
+    assert payload["command"]["monocular_semantic_orbit"] == {
+        "target_label": "chair",
+        "radius_m": 1.5,
+        "laps": 1.0,
+        "direction": "counterclockwise",
+        "yaw_mode": "face_center",
+        "keep_current_altitude": True,
+        "baseline_distance_m": 0.6,
+        "baseline_direction": "right",
+    }
+
+
+def test_monocular_semantic_orbit_rejects_unsafe_baseline() -> None:
+    response = client.post(
+        "/api/tasks/dispatch",
+        json={
+            "category": "embodied",
+            "embodied_task": "monocular_semantic_orbit",
+            "mode": "dry_run",
+            "parameters": {
+                "target_label": "chair", "radius_m": 1.5, "laps": 1,
+                "baseline_distance_m": 1.2, "baseline_direction": "right",
+            },
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_monocular_semantic_orbit_rejects_second_move_below_half_metre() -> None:
+    response = client.post(
+        "/api/tasks/dispatch",
+        json={
+            "category": "embodied",
+            "embodied_task": "monocular_semantic_orbit",
+            "mode": "dry_run",
+            "parameters": {
+                "target_label": "chair", "radius_m": 1.5, "laps": 1,
+                "baseline_distance_m": 0.49, "baseline_direction": "left",
+            },
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_semantic_scan_orbit_dry_run_builds_fixed_interrupt_resume_contract(monkeypatch) -> None:
+    async def forbidden_send(_command):
+        raise AssertionError("scan dry-run must not contact the onboard bridge")
+
+    monkeypatch.setattr(task_dispatcher.onboard_bridge, "send", forbidden_send)
+    response = client.post(
+        "/api/tasks/dispatch",
+        json={
+            "category": "embodied",
+            "embodied_task": "semantic_scan_orbit",
+            "mode": "dry_run",
+            "parameters": {
+                "target_label": "chair", "radius_m": 1.5, "laps": 1,
+                "orbit_direction": "clockwise",
+            },
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["delivery"]["status"] == "safety_locked"
+    assert payload["command"]["command"] == "SEMANTIC_SCAN_ORBIT"
+    assert payload["command"]["semantic_scan_orbit"] == {
+        "target_label": "chair",
+        "scan_width_m": 6.0,
+        "scan_length_m": 10.0,
+        "sweep_count": 5,
+        "radius_m": 1.5,
+        "laps": 1.0,
+        "direction": "clockwise",
+        "yaw_mode": "face_center",
+        "keep_current_altitude": True,
+    }
+
+
+def test_semantic_scan_orbit_rejects_mutable_target_or_direction() -> None:
+    for target, direction in (("person", "clockwise"), ("chair", "counterclockwise")):
+        response = client.post(
+            "/api/tasks/dispatch",
+            json={
+                "category": "embodied",
+                "embodied_task": "semantic_scan_orbit",
+                "mode": "dry_run",
+                "parameters": {
+                    "target_label": target, "radius_m": 1.5, "laps": 1,
+                    "orbit_direction": direction,
+                },
+            },
+        )
+        assert response.status_code == 422
+
+
+def test_hybrid_semantic_orbit_dry_run_builds_far_to_near_contract(monkeypatch) -> None:
+    async def forbidden_send(_command):
+        raise AssertionError("hybrid dry-run must not contact the onboard bridge")
+
+    monkeypatch.setattr(task_dispatcher.onboard_bridge, "send", forbidden_send)
+    response = client.post(
+        "/api/tasks/dispatch",
+        json={
+            "category": "embodied", "embodied_task": "hybrid_semantic_orbit",
+            "mode": "dry_run",
+            "parameters": {
+                "target_label": "chair", "radius_m": 1.5, "laps": 1,
+                "orbit_direction": "clockwise", "baseline_distance_m": 0.75,
+                "baseline_direction": "right",
+            },
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["command"]["command"] == "HYBRID_SEMANTIC_ORBIT"
+    assert payload["command"]["hybrid_semantic_orbit"] == {
+        "target_label": "chair", "radius_m": 1.5, "laps": 1.0,
+        "direction": "clockwise", "yaw_mode": "face_center",
+        "keep_current_altitude": True, "baseline_distance_m": 0.75,
+        "baseline_direction": "right",
+    }
+
+
+def test_task_dispatcher_merges_onboard_terminal_status() -> None:
+    async def scenario() -> None:
+        task_id = "hybrid-runtime-test"
+        async with task_dispatcher._lock:
+            task_dispatcher._history.insert(0, {"task_id": task_id, "delivery": {"status": "accepted"}})
+        await task_dispatcher.ingest_onboard_status({
+            "task_id": task_id, "status": "semantic_succeeded",
+            "semantic_state": "SUCCEEDED", "semantic_executor": "hybrid",
+            "detail": "orbit complete", "time_unix_ms": int(time.time() * 1000),
+        })
+        snapshot = await task_dispatcher.snapshot()
+        item = next(entry for entry in snapshot["recent_tasks"] if entry["task_id"] == task_id)
+        assert item["runtime"]["semantic_state"] == "SUCCEEDED"
+        assert item["runtime"]["detail"] == "orbit complete"
+        async with task_dispatcher._lock:
+            task_dispatcher._history = [entry for entry in task_dispatcher._history if entry.get("task_id") != task_id]
+
+    asyncio.run(scenario())
+
+
 def test_authorized_live_semantic_orbit_is_delivered_as_operator_task() -> None:
     class FakeBridge:
         sent = []

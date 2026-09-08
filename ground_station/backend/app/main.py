@@ -20,6 +20,7 @@ from .schemas import (
     MissionMode,
     MissionState,
     OnboardObservation,
+    OnboardTaskStatus,
     ObservationInferenceRequest,
     TaskDispatchRequest,
 )
@@ -181,6 +182,19 @@ async def onboard_observation(
         return await observation_pipeline.ingest(observation)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/onboard/task-status", status_code=202)
+async def onboard_task_status(
+    update: OnboardTaskStatus,
+    x_observation_token: str | None = Header(default=None),
+) -> dict:
+    if (
+        settings.onboard_observation_token == "REQUIRED"
+        or x_observation_token != settings.onboard_observation_token
+    ):
+        raise HTTPException(status_code=401, detail="invalid onboard observation token")
+    return await task_dispatcher.ingest_onboard_status(update.status)
 
 
 @app.get("/api/onboard/latest/image")

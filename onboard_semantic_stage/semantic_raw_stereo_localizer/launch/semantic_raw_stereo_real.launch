@@ -16,6 +16,8 @@
   <arg name="weights" default="$(env HOME)/models/yolo_world/yolov8s-worldv2.pt"/>
   <arg name="confidence" default="0.20"/>
   <arg name="depth_backend" default="sgbm"/>
+  <arg name="detector_backend" default="local"/>
+  <arg name="detector_service" default="/shared_yolo_world_detector/detect"/>
   <arg name="debug_bbox" default="[]"/>
 
   <node pkg="semantic_raw_stereo_localizer" type="semantic_raw_stereo_node.py"
@@ -38,6 +40,8 @@
     <param name="weights" value="$(arg weights)"/>
     <param name="confidence" value="$(arg confidence)"/>
     <param name="depth_backend" value="$(arg depth_backend)"/>
+    <param name="detector_backend" value="$(arg detector_backend)"/>
+    <param name="detector_service" value="$(arg detector_service)"/>
     <rosparam param="debug_bbox" subst_value="true">$(arg debug_bbox)</rosparam>
   </node>
 </launch>

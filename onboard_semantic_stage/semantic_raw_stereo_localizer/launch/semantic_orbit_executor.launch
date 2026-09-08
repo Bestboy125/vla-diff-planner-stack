@@ -2,6 +2,12 @@
   <arg name="execution_enabled" default="false"/>
   <arg name="world_frame" default="world"/>
   <arg name="odom_topic" default="/ekf/ekf_odom"/>
+  <arg name="altitude_reference_z_m" default="0.0"/>
+  <arg name="min_operating_altitude" default="0.30"/>
+  <arg name="max_operating_altitude" default="2.0"/>
+  <arg name="max_approach_leg" default="2.0"/>
+  <arg name="max_approach_stages" default="20"/>
+  <arg name="approach_timeout" default="60.0"/>
   <arg name="request_topic" default="/vla_diff_bridge/semantic_orbit_request"/>
   <arg name="cancel_topic" default="/vla_diff_bridge/semantic_orbit_cancel"/>
 
@@ -10,6 +16,12 @@
     <param name="execution_enabled" value="$(arg execution_enabled)"/>
     <param name="world_frame" value="$(arg world_frame)"/>
     <param name="odom_topic" value="$(arg odom_topic)"/>
+    <param name="altitude_reference_z_m" value="$(arg altitude_reference_z_m)"/>
+    <param name="min_operating_altitude" value="$(arg min_operating_altitude)"/>
+    <param name="max_operating_altitude" value="$(arg max_operating_altitude)"/>
+    <param name="max_approach_leg" value="$(arg max_approach_leg)"/>
+    <param name="max_approach_stages" value="$(arg max_approach_stages)"/>
+    <param name="approach_timeout" value="$(arg approach_timeout)"/>
     <remap from="~request" to="$(arg request_topic)"/>
     <remap from="~cancel" to="$(arg cancel_topic)"/>
   </node>
