@@ -102,14 +102,12 @@ def generate_local_serpentine(width_m=6.0, length_m=10.0, sweep_count=5,
             append(start_x + (end_x - start_x) * fraction, y_value, "scan", row)
         if row == sweeps - 1:
             continue
-        # A sampled U-shaped connector remains inside the 6 x 10 m scan box.
-        # Diff-Planner receives each sample independently and performs the
-        # dynamically feasible trajectory optimization between them.
-        inward = -1.0 if end_x > 0.5 * width else 1.0
-        bulge = min(0.5 * width, bulge_ratio * row_spacing)
+        # Keep full-width scan rows. A +Y connector avoids the old inward
+        # sine bulge's extra X reversal; dynamics remain Diff-Planner's job.
+        # Keep turn_bulge_ratio accepted for old launch-file compatibility.
         for index in range(1, samples + 1):
             fraction = index / float(samples)
-            connector_x = end_x + inward * bulge * math.sin(math.pi * fraction)
+            connector_x = end_x
             connector_y = y_value + row_spacing * fraction
             append(connector_x, connector_y, "turn", row)
     return points

@@ -23,11 +23,12 @@ from .schemas import (
     OnboardTaskStatus,
     ObservationInferenceRequest,
     TaskDispatchRequest,
+    TaskStopRequest,
 )
 from .task_dispatch import TaskDispatcher
 
 
-app = FastAPI(title="VLA Ground Station", version="0.1.0")
+app = FastAPI(title="UAV Ground Station", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -73,6 +74,7 @@ task_dispatcher = TaskDispatcher(
     command_ttl_ms=settings.onboard_command_ttl_ms,
     world_frame=settings.expected_world_frame,
     body_frame=settings.expected_body_frame,
+    model_inference_enabled=settings.model_inference_enabled,
 )
 
 
@@ -82,6 +84,7 @@ async def system_snapshot(include_models: bool = True) -> dict:
         "backend": "online",
         "control_output_enabled": settings.control_output_enabled,
         "safety_lock": not settings.control_output_enabled,
+        "model_inference_enabled": settings.model_inference_enabled,
         "host_interfaces": {
             "onboard_lan": settings.host_onboard_ip,
             "operator_lan": settings.host_operator_ip,
@@ -90,7 +93,7 @@ async def system_snapshot(include_models: bool = True) -> dict:
         "onboard_observation": await observation_pipeline.snapshot(),
         "task_runtime": await task_dispatcher.snapshot(),
     }
-    if include_models:
+    if include_models and settings.model_inference_enabled:
         openvla, pi05 = await asyncio.gather(
             model_gateway.openvla_status(), model_gateway.pi05_status()
         )
@@ -99,6 +102,18 @@ async def system_snapshot(include_models: bool = True) -> dict:
             "pi05": pi05.model_dump(),
         }
     return payload
+
+
+@app.post("/api/tasks/stop")
+async def stop_onboard_task(request: TaskStopRequest,
+                            x_operator_token: str | None = Header(default=None)) -> dict:
+    # Independent of the selected task's parameters and of any in-flight HTTP
+    # request. Keep the same authentication/live gates as ordinary dispatch.
+    return await task_dispatcher.dispatch(TaskDispatchRequest(
+        category="atomic", atomic_task="hold", mode=request.mode,
+        live_confirmation=request.live_confirmation,
+        instruction="Cancel onboard tasks and hold position",
+    ), x_operator_token)
 
 
 @app.get("/api/health")
@@ -138,6 +153,8 @@ async def stop_mission(mission_id: UUID) -> dict:
 
 @app.post("/api/inference/latest-observation")
 async def latest_observation_inference(request: ObservationInferenceRequest) -> dict:
+    if not settings.model_inference_enabled:
+        raise HTTPException(status_code=404, detail="VLA inference is disabled on this ground station.")
     try:
         return await observation_pipeline.infer_latest_no_motion(request.instruction, request.policy)
     except ValueError as exc:
@@ -148,6 +165,8 @@ async def latest_observation_inference(request: ObservationInferenceRequest) -> 
 
 @app.post("/api/inference/openvla")
 async def openvla_inference(request: InferenceRequest) -> dict:
+    if not settings.model_inference_enabled:
+        raise HTTPException(status_code=404, detail="VLA inference is disabled on this ground station.")
     try:
         result = await model_gateway.predict_openvla(request)
     except RuntimeError as exc:
@@ -162,6 +181,8 @@ async def openvla_inference(request: InferenceRequest) -> dict:
 
 @app.post("/api/inference/pi05")
 async def pi05_inference(request: InferenceRequest) -> dict:
+    if not settings.model_inference_enabled:
+        raise HTTPException(status_code=404, detail="VLA inference is disabled on this ground station.")
     try:
         return await model_gateway.predict_pi05(request)
     except RuntimeError as exc:

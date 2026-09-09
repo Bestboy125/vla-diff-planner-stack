@@ -14,6 +14,8 @@ from atomic_skill_executor.msg import ExecuteAtomicSkillAction, ExecuteAtomicSki
 from geometry_msgs.msg import PointStamped
 from mavros_msgs.msg import State
 from nav_msgs.msg import Odometry
+from sensor_msgs.msg import PointCloud2
+from sensor_msgs import point_cloud2
 from std_msgs.msg import Empty, String
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -76,10 +78,19 @@ class SemanticScanOrbitMission(object):
         self.max_altitude = float(gp("~max_operating_altitude", 2.0))
 
         self.lock = threading.RLock()
+        self.latest_obstacle_cloud = None
+        self.obstacle_resolution = float(gp('/drone_0_diff_planner_node/grid_map/resolution', 0.1))
+        self.skipped_waypoints = []
+        self.consecutive_skips = 0
+        self.obstacle_check_at = 0.0
+        rospy.Subscriber('/drone_0_diff_planner_node/grid_map/occupancy_inflate',
+                         PointCloud2, self.on_obstacle_cloud, queue_size=1)
         self.active = None
         self.phase = None
         self.route = []
         self.route_index = 0
+        self.rejoin = None
+        self.route_origin = None
         self.nav_goal_finishes_waypoint = False
         self.latest_odom = None
         self.latest_odom_received = rospy.Time(0)
@@ -132,7 +143,8 @@ class SemanticScanOrbitMission(object):
             "task_id": active.get("task_id") if active else None,
             "route_index": self.route_index,
             "route_waypoint_count": len(self.route),
-            "completed_waypoints": min(self.route_index, len(self.route)),
+            "completed_waypoints": max(0, min(self.route_index, len(self.route))-len(getattr(self, 'skipped_waypoints', []))),
+            "skipped_waypoints": list(getattr(self, 'skipped_waypoints', [])),
             "orbit_attempts": self.orbit_count,
             "completed_orbits": self.completed_orbit_count,
             "time_unix_ms": int(time.time() * 1000),
@@ -140,6 +152,8 @@ class SemanticScanOrbitMission(object):
         if extra:
             payload.update(extra)
         self.status_pub.publish(String(data=json.dumps(payload, separators=(",", ":"))))
+        if (extra and 'goal_world' in extra) or state in ('CHAIR_DETECTED', 'ORBIT_COMPLETED', 'REJOIN_ALIGN', 'SCAN_RESUMED', 'FAILED'):
+            rospy.loginfo('[scan_checkpoint] %s', json.dumps(payload, separators=(',', ':')))
 
     def on_odom(self, message):
         with self.lock:
@@ -203,6 +217,10 @@ class SemanticScanOrbitMission(object):
                 if not self.route:
                     raise ScanMissionError("generated scan route is empty")
                 self.active = request
+                self.route_origin = odom_position(odom)
+                self.rejoin = None
+                self.skipped_waypoints = []
+                self.consecutive_skips = 0
                 self.phase = "WAITING_FOR_YOLO"
                 self.route_index = 0
                 self.nav_goal_finishes_waypoint = False
@@ -271,15 +289,20 @@ class SemanticScanOrbitMission(object):
             self.hover_pub.publish(Empty())
             self.publish_status(
                 "MISSION_COMPLETED", "all preset scan waypoints completed",
-                {"processed_chairs": len(self.processed_targets)}, request=request)
+                {"processed_chairs": len(self.processed_targets),
+                 "skipped_waypoints": getattr(self, 'skipped_waypoints', []),
+                 "coverage_complete": not getattr(self, 'skipped_waypoints', [])}, request=request)
             self.reset()
             return
         current = odom_position(odom)
         route_target = self.route[self.route_index]["world"]
+        if self.goal_occupied(route_target):
+            self.begin_obstacle_skip()
+            return
         remaining = distance3(current, route_target)
         if remaining <= 0.15:
             reached = self.route_progress_extra()
-            reached["completed_waypoints"] = self.route_index + 1
+            reached["completed_waypoints"] = self.route_index + 1 - len(getattr(self, 'skipped_waypoints', []))
             self.publish_status(
                 "WAYPOINT_REACHED", "scan waypoint already within completion tolerance",
                 reached)
@@ -299,8 +322,12 @@ class SemanticScanOrbitMission(object):
         goal.yaw_mode = "path_tangent"
         goal.timeout = self.waypoint_timeout
         self.phase = "NAVIGATING" if self.nav_goal_finishes_waypoint else "RETURNING"
-        self.client.send_goal(goal, done_cb=self.on_navigation_done,
-                              feedback_cb=self.on_navigation_feedback)
+        # Never send the next goal inside SimpleActionClient's done callback:
+        # it sets DONE after that callback, corrupting the new goal's state.
+        # Polling also avoids callback/mission-lock inversion during cancellation.
+        self.navigation_started = time.monotonic()
+        self.client.send_goal(goal)
+        self.navigation_target = goal_target
         self.publish_status(
             self.phase,
             "Diff-Planner is executing a preset scan waypoint" if self.nav_goal_finishes_waypoint
@@ -320,6 +347,152 @@ class SemanticScanOrbitMission(object):
             "waypoint_kind": item["kind"] if item else "complete",
         }
 
+    def on_obstacle_cloud(self, message):
+        # Cache only. Scan at most once per second, not on every cloud callback.
+        self.latest_obstacle_cloud = (message, time.monotonic())
+
+    def goal_occupied(self, target):
+        cached = getattr(self, 'latest_obstacle_cloud', None)
+        if cached is None or time.monotonic()-cached[1] > 1.0:
+            return False  # Unknown is NOT evidence of occupancy or free space.
+        cloud = cached[0]
+        if cloud.header.frame_id != self.world_frame:
+            return False
+        half = self.obstacle_resolution * 0.51
+        if not math.isfinite(half) or half <= 0:
+            return False
+        return any(all(abs(float(point[i])-target[i]) <= half for i in range(3))
+                   for point in point_cloud2.read_points(cloud, field_names=('x','y','z'), skip_nans=True))
+
+    def begin_obstacle_skip(self):
+        if getattr(self, 'consecutive_skips', 0) >= 3:
+            self.fail('three consecutive occupied waypoints skipped; stopping to avoid blind route advancement')
+            return
+        self.client.cancel_goal()
+        self.hover_pub.publish(Empty())
+        self.phase = 'SKIP_SETTLING'
+        self.skip_started = time.monotonic()
+        self.skip_stable_since = None
+        self.publish_status('WAYPOINT_BLOCKED', 'inflated obstacle cloud confirms occupied target; cancelling and settling',
+                            dict(self.route_progress_extra(), goal_world=self.route[self.route_index]['world']))
+
+    def advance_obstacle_skip(self):
+        try:
+            odom = self.require_flight_ready()
+            if time.monotonic()-self.skip_started > 10.0:
+                raise ScanMissionError('could not settle before skipping occupied waypoint')
+            if ((self.client.gh is not None and self.client.simple_state != 2)
+                    or linear_speed(odom) > self.stop_velocity_tolerance):
+                self.skip_stable_since = None
+                return
+            if self.skip_stable_since is None:
+                self.skip_stable_since = time.monotonic()
+                return
+            if time.monotonic()-self.skip_stable_since < self.stop_settle_time:
+                return
+            self.skipped_waypoints.append(self.route_index)
+            self.consecutive_skips += 1
+            self.publish_status('WAYPOINT_SKIPPED', 'occupied waypoint skipped; next goal still requires Diff-Planner collision-free planning',
+                                self.route_progress_extra())
+            self.route_index += 1
+            self.dispatch_route_leg()
+        except ScanMissionError as exc:
+            self.fail(str(exc))
+
+    def capture_rejoin(self, odom):
+        end = self.route[self.route_index]["world"]
+        start = self.route[self.route_index - 1]["world"] if self.route_index else self.route_origin
+        vector = tuple(end[i] - start[i] for i in range(3))
+        length2 = sum(v*v for v in vector)
+        if length2 < 1e-8:
+            raise ScanMissionError("cannot rejoin a zero-length route segment")
+        position = odom_position(odom)
+        fraction = max(0.0, min(1.0, sum((position[i]-start[i])*vector[i] for i in range(3))/length2))
+        self.rejoin = dict(index=self.route_index, interrupted_world=list(position),
+                           anchor=tuple(start[i]+fraction*vector[i] for i in range(3)),
+                           yaw=math.atan2(vector[1], vector[0]))
+
+    def dispatch_rejoin(self):
+        odom = self.require_flight_ready()
+        if self.rejoin is None or self.route_index != self.rejoin['index']:
+            raise ScanMissionError("scan rejoin checkpoint/index mismatch")
+        current, anchor = odom_position(odom), self.rejoin['anchor']
+        distance = distance3(current, anchor)
+        if distance <= 0.15:
+            self.phase = 'REJOIN_SETTLING'
+            self.rejoin['stable_since'] = None
+            self.navigation_started = time.monotonic()
+            return
+        scale = min(1.0, self.max_goto_leg / distance)
+        target = tuple(current[i]+scale*(anchor[i]-current[i]) for i in range(3))
+        goal = ExecuteAtomicSkillGoal()
+        goal.skill = 'GOTO_WORLD'; goal.center_frame = 'world'
+        goal.center.x, goal.center.y, goal.center.z = target
+        goal.yaw_mode = 'path_tangent'; goal.timeout = self.waypoint_timeout
+        self.phase = 'REJOINING'; self.navigation_started = time.monotonic()
+        self.client.send_goal(goal)
+        self.publish_status('REJOINING', 'returning to saved world scan segment; detection triggers paused',
+                            dict(self.rejoin, goal_world=target, measured_world=current))
+
+    def advance_rejoin(self):
+        try:
+            odom = self.require_flight_ready()
+            if time.monotonic() - self.rejoin.get('last_status', 0.0) >= 1.0:
+                self.rejoin['last_status'] = time.monotonic()
+                self.publish_status('REJOIN_PROGRESS', 'return/alignment in progress; scan index frozen',
+                                    dict(self.rejoin, phase=self.phase, measured_world=odom_position(odom),
+                                         measured_yaw=odom_yaw(odom)))
+            if time.monotonic() - self.rejoin['started'] > 180.0:
+                raise ScanMissionError('scan rejoin total timeout')
+            if time.monotonic() - self.navigation_started > self.waypoint_timeout + 2.0:
+                raise ScanMissionError('scan rejoin stage timeout')
+            if self.phase == 'REJOINING':
+                if self.client.simple_state != 2:
+                    return
+                result = self.client.get_result()
+                if self.client.get_state() != GoalStatus.SUCCEEDED or not result or not result.success:
+                    raise ScanMissionError('return-to-route action failed')
+                self.dispatch_rejoin()
+                return
+            if distance3(odom_position(odom), self.rejoin['anchor']) > 0.25:
+                raise ScanMissionError('drifted away from saved rejoin point during settling/alignment')
+            error = math.atan2(math.sin(self.rejoin['yaw']-odom_yaw(odom)),
+                               math.cos(self.rejoin['yaw']-odom_yaw(odom)))
+            if self.phase == 'REJOIN_ALIGN':
+                if self.client.simple_state != 2:
+                    return
+                result = self.client.get_result()
+                if self.client.get_state() != GoalStatus.SUCCEEDED or not result or not result.success:
+                    raise ScanMissionError('scan heading alignment failed')
+                if abs(error) > 0.10:
+                    raise ScanMissionError('scan heading alignment not confirmed by odometry')
+                self.phase = 'REJOIN_SETTLING'; self.rejoin['stable_since'] = None
+            if (linear_speed(odom) > self.stop_velocity_tolerance
+                    or abs(odom.twist.twist.angular.z) > 0.10):
+                self.rejoin['stable_since'] = None
+                return
+            if self.rejoin.get('stable_since') is None:
+                self.rejoin['stable_since'] = time.monotonic()
+                return
+            if time.monotonic() - self.rejoin['stable_since'] < self.stop_settle_time:
+                return
+            if abs(error) > 0.10:
+                goal = ExecuteAtomicSkillGoal(); goal.skill = 'ROTATE'
+                goal.direction = 'left' if error > 0 else 'right'
+                goal.angle = abs(error); goal.timeout = self.waypoint_timeout
+                self.phase = 'REJOIN_ALIGN'; self.navigation_started = time.monotonic()
+                self.client.send_goal(goal)
+                self.publish_status('REJOIN_ALIGN', 'aligning with original scan segment', dict(self.rejoin))
+                return
+            self.publish_status('SCAN_RESUMED', 'rejoin position, low speed and original heading confirmed',
+                                dict(self.rejoin, measured_world=odom_position(odom), measured_yaw=odom_yaw(odom)))
+            self.rejoin = None
+            self.ignore_detection_until = rospy.Time.now() + rospy.Duration(self.post_orbit_cooldown)
+            self.observation_not_before = self.ignore_detection_until
+            self.dispatch_route_leg()
+        except ScanMissionError as exc:
+            self.fail(str(exc))
+
     def on_navigation_feedback(self, feedback):
         with self.lock:
             if self.active is None or self.phase not in self.NAVIGATION_PHASES:
@@ -338,8 +511,9 @@ class SemanticScanOrbitMission(object):
                 self.fail(result.message if result else "scan navigation returned no result")
                 return
             if self.nav_goal_finishes_waypoint:
+                self.consecutive_skips = 0
                 reached = self.route_progress_extra()
-                reached["completed_waypoints"] = self.route_index + 1
+                reached["completed_waypoints"] = self.route_index + 1 - len(getattr(self, 'skipped_waypoints', []))
                 self.publish_status(
                     "WAYPOINT_REACHED", "Diff-Planner completed the preset scan waypoint",
                     reached)
@@ -369,6 +543,11 @@ class SemanticScanOrbitMission(object):
             if not all(math.isfinite(value) for value in target) or self.target_already_processed(target):
                 return
             self.pending_target = target
+            try:
+                self.capture_rejoin(self.require_flight_ready())
+            except ScanMissionError as exc:
+                self.fail(str(exc))
+                return
             self.phase = "STOPPING_FOR_CHAIR"
             self.stop_stable_since = None
             self.client.cancel_goal()
@@ -376,13 +555,40 @@ class SemanticScanOrbitMission(object):
             self.hover_pub.publish(Empty())
             self.publish_status(
                 "CHAIR_DETECTED", "stable stereo chair detected; scan navigation cancelled",
-                dict(self.route_progress_extra(), target_world=list(target)))
+                dict(self.route_progress_extra(), target_world=list(target), rejoin_checkpoint=dict(self.rejoin)))
 
     def on_timer(self, _event):
         with self.lock:
             if self.active is None:
                 return
             now = rospy.Time.now()
+            if self.phase == 'SKIP_SETTLING':
+                self.advance_obstacle_skip()
+                return
+            if self.phase in ('REJOINING', 'REJOIN_SETTLING', 'REJOIN_ALIGN'):
+                self.advance_rejoin()
+                return
+            if self.phase in self.NAVIGATION_PHASES:
+                try:
+                    self.require_flight_ready()
+                except ScanMissionError as exc:
+                    self.fail(str(exc))
+                    return
+                if time.monotonic() - getattr(self, 'obstacle_check_at', 0.0) >= 1.0:
+                    self.obstacle_check_at = time.monotonic()
+                    if self.goal_occupied(self.route[self.route_index]['world']):
+                        self.begin_obstacle_skip()
+                        return
+                # SimpleGoalState.DONE=2, not GoalStatus.SUCCEEDED=3. Only this
+                # state proves actionlib has completed its transition callback.
+                if self.client.simple_state == 2:
+                    self.on_navigation_done(self.client.get_state(), self.client.get_result())
+                elif time.monotonic() - self.navigation_started > self.waypoint_timeout + 2.0:
+                    self.fail("scan waypoint execution timed out")
+                else:
+                    self.publish_status(self.phase, "waiting for waypoint completion",
+                                        self.route_progress_extra())
+                return
             if self.phase == "STOPPING_FOR_CHAIR":
                 try:
                     odom = self.require_flight_ready()
@@ -465,7 +671,7 @@ class SemanticScanOrbitMission(object):
             self.processed_targets.append(tuple(completed_target))
             self.publish_status(
                 "ORBIT_COMPLETED",
-                "chair orbit completed; resuming the interrupted preset waypoint",
+                "chair orbit completed; returning to saved scan segment before resuming",
                 {"orbit_task_id": self.active_orbit_task_id,
                  "resume_waypoint_index": self.route_index})
             self.active_orbit_task_id = None
@@ -473,7 +679,10 @@ class SemanticScanOrbitMission(object):
             self.ignore_detection_until = rospy.Time.now() + rospy.Duration(self.post_orbit_cooldown)
             self.observation_not_before = self.ignore_detection_until
             try:
-                self.dispatch_route_leg()
+                if self.rejoin is None:
+                    raise ScanMissionError('missing scan interruption checkpoint')
+                self.rejoin['started'] = time.monotonic()
+                self.dispatch_rejoin()
             except ScanMissionError as exc:
                 self.fail(str(exc))
 
@@ -504,6 +713,7 @@ class SemanticScanOrbitMission(object):
         self.reset()
 
     def reset(self):
+        self.rejoin = None
         self.active = None
         self.phase = None
         self.route = []

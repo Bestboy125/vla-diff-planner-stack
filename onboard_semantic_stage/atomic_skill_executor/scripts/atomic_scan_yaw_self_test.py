@@ -2,6 +2,7 @@
 """Exercise actual atomic execution logic offline, without ROS initialization."""
 import ast
 import math
+import threading
 from pathlib import Path
 from types import SimpleNamespace as NS
 import unittest
@@ -14,9 +15,11 @@ tree = ast.parse(source.read_text(encoding="utf-8"))
 definitions = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.ClassDef))]
 namespace = {
     "math": math,
+    "threading": threading,
     "rospy": NS(Time=NS(now=lambda: 0.0), Duration=lambda value: value,
                 Rate=lambda hz: Mock(), is_shutdown=lambda: False),
     "ExecuteAtomicSkillResult": lambda *args: args,
+    "PositionCommand": lambda: NS(header=NS()),
 }
 exec(compile(ast.Module(body=definitions, type_ignores=[]), str(source), "exec"), namespace)
 Server = namespace["Server"]
@@ -25,6 +28,8 @@ Server = namespace["Server"]
 class ScanYawTests(unittest.TestCase):
     def server(self, yaw=0.7):
         server = Server.__new__(Server)
+        server.yaw_lock = threading.RLock()
+        server.yaw_target = None
         server.execution_enabled = True
         server.valid_odom = lambda: True
         server.pose = lambda: (0.0, 0.0, 1.0)
@@ -42,6 +47,22 @@ class ScanYawTests(unittest.TestCase):
     def goal(self, x, y, mode=""):
         return NS(skill="GOTO_WORLD", center_frame="world", center=NS(x=x, y=y, z=1.0),
                   yaw_mode=mode, timeout=60.0)
+
+    def test_terminal_success_stops_yaw_publisher(self):
+        server = self.server()
+        server.yaw_target = 1.0
+        server.yaw_pub = Mock()
+        server.execute(self.goal(1, 0))
+        self.assertIsNone(server.yaw_target)
+        server.publish_yaw(None)
+        server.yaw_pub.publish.assert_not_called()
+
+    def test_exception_also_releases_yaw(self):
+        server = self.server()
+        server.yaw_target = 1.0
+        server._execute = Mock(side_effect=RuntimeError('test'))
+        with self.assertRaises(RuntimeError): server.execute(self.goal(1,0))
+        self.assertIsNone(server.yaw_target)
 
     def test_scan_faces_each_segment_in_world_despite_initial_heading(self):
         for x, y in ((1, 0), (-1, 0), (0, 1), (0.6, 0.4), (-0.6, 0.4)):

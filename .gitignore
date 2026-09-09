@@ -34,6 +34,7 @@ yolo_world_chair/runs/
 # External Windows junction; source lives in another project
 DroneVoiceConsole_link/
 ground_station/ground_station.local.ps1
+ground_station/linux/config.env
 
 # Local/private companion projects and deployment records
 AerialClaw-AerialClaw2.0/

@@ -10,6 +10,7 @@ class Settings:
     openvla_url: str = os.environ.get("OPENVLA_URL", "http://127.0.0.1:5007")
     pi05_host: str = os.environ.get("PI05_HOST", "127.0.0.1")
     pi05_port: int = int(os.environ.get("PI05_PORT", "8000"))
+    model_inference_enabled: bool = os.environ.get("MODEL_INFERENCE_ENABLED", "true").lower() == "true"
     control_output_enabled: bool = os.environ.get("CONTROL_OUTPUT_ENABLED", "false").lower() == "true"
     host_onboard_ip: str = os.environ.get("HOST_ONBOARD_IP", "127.0.0.1")
     host_operator_ip: str = os.environ.get("HOST_OPERATOR_IP", "127.0.0.1")

@@ -85,6 +85,11 @@ class MissionCreate(BaseModel):
         return normalized
 
 
+class TaskStopRequest(BaseModel):
+    mode: MissionMode = MissionMode.DRY_RUN
+    live_confirmation: str = Field(default="", max_length=128)
+
+
 class TaskParameters(BaseModel):
     distance_m: float = Field(default=0.5, ge=0.05, le=2.0)
     takeoff_height_m: float = Field(default=0.8, ge=0.3, le=2.0)

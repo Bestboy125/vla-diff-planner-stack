@@ -103,10 +103,13 @@ class MissionTests(unittest.TestCase):
         self.assertEqual(m.processed_targets, [])
         m.post_orbit_cooldown = 5
         m.dispatch_route_leg = Mock()
+        m.rejoin = dict(index=m.route_index, anchor=(10,20,1.2), yaw=0)
+        m.dispatch_rejoin = Mock()
         m.on_orbit_status(NS(data=json.dumps(dict(task_id=m.active_orbit_task_id,
                                                 state='SUCCEEDED', target_world=[11.6,0,.8]))))
         self.assertEqual(m.processed_targets, [(11.6, 0, .8)])
-        m.dispatch_route_leg.assert_called_once()
+        m.dispatch_rejoin.assert_called_once()
+        m.dispatch_route_leg.assert_not_called()
 
     def test_failed_orbit_does_not_mark_processed(self):
         m = self.mission(0)

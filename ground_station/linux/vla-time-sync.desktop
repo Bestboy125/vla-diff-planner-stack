@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=同步机载电脑时间
+Comment=使用 192.168.5.5 校准地面站笔记本时间并验证时差
+Exec=/home/oem/vla-ground-station/ground_station/linux/sync-time-with-onboard.sh
+Icon=preferences-system-time
+Terminal=true
+Categories=System;

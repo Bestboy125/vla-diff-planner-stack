@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Safety-gated atomic skills used by the staged semantic-orbit workflow."""
 import math
+import threading
 
 import actionlib
 import rospy
@@ -67,6 +68,7 @@ class Server(object):
         self.last_pos = None
         self.localization_bad = False
         self.yaw_target = None
+        self.yaw_lock = threading.RLock()
         self.goal_pub = rospy.Publisher(gp("~goal_topic", "/goal"), PoseStamped, queue_size=1)
         self.yaw_pub = rospy.Publisher(
             gp("~yaw_topic", "/planning/yaw"), PositionCommand, queue_size=1
@@ -98,11 +100,16 @@ class Server(object):
         self.received = rospy.Time.now()
 
     def publish_yaw(self, _event):
-        if self.yaw_target is not None:
-            message = PositionCommand()
-            message.header.stamp = rospy.Time.now()
-            message.yaw = self.yaw_target
-            self.yaw_pub.publish(message)
+        with self.yaw_lock:
+            if self.yaw_target is not None:
+                message = PositionCommand()
+                message.header.stamp = rospy.Time.now()
+                message.yaw = self.yaw_target
+                self.yaw_pub.publish(message)
+
+    def release_yaw(self):
+        with self.yaw_lock:
+            self.yaw_target = None
 
     def pose(self):
         position = self.odom.pose.pose.position
@@ -149,7 +156,7 @@ class Server(object):
         self.server.publish_feedback(feedback)
 
     def fail(self, status, message):
-        self.yaw_target = None
+        self.release_yaw()
         self.server.set_aborted(
             ExecuteAtomicSkillResult(False, status, message), message
         )
@@ -163,7 +170,7 @@ class Server(object):
         rate = rospy.Rate(20)
         while not rospy.is_shutdown():
             if self.server.is_preempt_requested():
-                self.yaw_target = None
+                self.release_yaw()
                 self.server.set_preempted(
                     ExecuteAtomicSkillResult(False, "PREEMPTED", "cancelled")
                 )
@@ -277,6 +284,12 @@ class Server(object):
         return center, points
 
     def execute(self, goal):
+        try:
+            self._execute(goal)
+        finally:
+            self.release_yaw()
+
+    def _execute(self, goal):
         if not self.execution_enabled:
             self.fail("FAILED_DISABLED", "execution is disabled by safety gate")
             return
@@ -351,6 +364,7 @@ class Server(object):
                 publish_position,
             ):
                 return
+        self.release_yaw()
         self.feedback("SUCCEEDED", len(points), len(points))
         self.server.set_succeeded(
             ExecuteAtomicSkillResult(True, "SUCCEEDED", "skill completed")

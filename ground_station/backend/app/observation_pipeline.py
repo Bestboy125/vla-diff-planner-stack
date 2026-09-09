@@ -299,6 +299,13 @@ class ObservationPipeline:
                 elapsed = self._receive_times[-1] - self._receive_times[0]
                 if elapsed > 0:
                     receive_fps = round((len(self._receive_times) - 1) / elapsed, 1)
+            connected = (
+                latest is not None
+                and receive_age_ms is not None
+                and receive_age_ms <= max(3000, self.contract.max_age_ms * 3)
+            )
+            if not connected:
+                receive_fps = 0.0
             local_state = None
             if latest:
                 pose = latest.odometry.pose
@@ -311,7 +318,7 @@ class ObservationPipeline:
                     "odom_stamp_unix_ms": latest.odometry.stamp_unix_ms,
                 }
             return {
-                "connected": latest is not None,
+                "connected": connected,
                 "vehicle_id": latest.vehicle_id if latest else None,
                 "image_sequence": latest.sequence if latest else None,
                 "capture_unix_ms": latest.capture_unix_ms if latest else None,

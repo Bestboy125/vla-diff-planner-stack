@@ -56,6 +56,7 @@ class TaskDispatcher:
         command_ttl_ms: int,
         world_frame: str,
         body_frame: str,
+        model_inference_enabled: bool = True,
     ) -> None:
         self.mission_manager = mission_manager
         self.onboard_bridge = onboard_bridge
@@ -65,6 +66,7 @@ class TaskDispatcher:
         self.command_ttl_ms = command_ttl_ms
         self.world_frame = world_frame
         self.body_frame = body_frame
+        self.model_inference_enabled = model_inference_enabled
         self._lock = asyncio.Lock()
         self._sequence = 0
         self._history: list[dict[str, Any]] = []
@@ -77,8 +79,6 @@ class TaskDispatcher:
                 for task in AtomicTaskName
             ],
             "embodied_tasks": [
-                {"name": EmbodiedTaskName.FREEFORM.value, "label": "自由具身指令"},
-                {"name": EmbodiedTaskName.ORBIT_TARGET.value, "label": "按半径绕目标飞行"},
                 {
                     "name": EmbodiedTaskName.SEMANTIC_ORBIT.value,
                     "label": "YOLO-World 语义目标接近并绕飞",
@@ -95,11 +95,11 @@ class TaskDispatcher:
                     "name": EmbodiedTaskName.HYBRID_SEMANTIC_ORBIT.value,
                     "label": "D435 左目远距粗定位 + 双目近距精定位绕飞",
                 },
-                {
-                    "name": EmbodiedTaskName.PASS_TARGET_FORWARD.value,
-                    "label": "飞过目标后继续前进",
-                },
-            ],
+            ] + ([
+                {"name": EmbodiedTaskName.FREEFORM.value, "label": "自由具身指令"},
+                {"name": EmbodiedTaskName.ORBIT_TARGET.value, "label": "按半径绕目标飞行"},
+                {"name": EmbodiedTaskName.PASS_TARGET_FORWARD.value, "label": "飞过目标后继续前进"},
+            ] if self.model_inference_enabled else []),
             "limits": {
                 "distance_m": [0.05, 2.0],
                 "takeoff_height_m": [0.8, 0.8],
@@ -239,6 +239,11 @@ class TaskDispatcher:
             return await self._dispatch_semantic_scan_orbit(request)
         if request.embodied_task == EmbodiedTaskName.HYBRID_SEMANTIC_ORBIT:
             return await self._dispatch_hybrid_semantic_orbit(request)
+        if not self.model_inference_enabled:
+            raise HTTPException(
+                status_code=422,
+                detail="This ground station only accepts onboard-native semantic tasks; VLA inference is disabled.",
+            )
         instruction = self._compose_embodied_instruction(request)
         mission = await self.mission_manager.create(
             MissionCreate(instruction=instruction, policy=request.policy, mode=request.mode)
