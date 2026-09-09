@@ -4,6 +4,16 @@
 
 ## Windows 一键启动
 
+### 迁移到另一台笔记本
+
+运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File ground_station/build_portable.ps1`
+生成独立 ZIP，输出到 `artifacts/distributions`。新笔记本完整解压后双击 `deploy.cmd`，
+后续双击 `start.cmd`。部署包包含生产前端和轻量后端，不包含私密配置、模型权重或 ROS。
+首次安装需联网，默认控制锁关闭。完整迁移、机载地址/令牌配置和防火墙说明见
+[笔记本部署说明](portable/README.md)。
+
+如果原电脑继续运行后端，新笔记本也可只通过浏览器访问原电脑，无需另装后端。
+
 双击 `start_vla_backend.cmd` 启动 OpenVLA 后端。需要切换模型时可在 PowerShell 中执行：
 
 ```powershell
