@@ -15,6 +15,12 @@ const atomicTasks = [
 ];
 
 const onboardTasks = [
+  ["approach_target", "接近目标"],
+  ["retreat_target", "远离目标"],
+  ["turn_to_target", "面对目标"],
+  ["pass_side", "指定侧 Pass"],
+  ["rotate_full", "整圈 Rotate"],
+  ["land_near_target", "目标旁选点并 Land"],
   ["semantic_orbit", "双目语义绕飞"],
   ["monocular_semantic_orbit", "左目双位置绕飞"],
   ["semantic_scan_orbit", "扫描椅子并绕飞"],
@@ -39,6 +45,16 @@ function App() {
   const [atomicTask, setAtomicTask] = useState("move_forward");
   const [embodiedTask, setEmbodiedTask] = useState("semantic_orbit");
   const [targetLabel, setTargetLabel] = useState("chair");
+  const [targetSelector, setTargetSelector] = useState("highest_confidence");
+  const [standOff, setStandOff] = useState(1.5);
+  const [objectRadius, setObjectRadius] = useState(0.5);
+  const [retreatDistance, setRetreatDistance] = useState(1);
+  const [maxTravel, setMaxTravel] = useState(10);
+  const [passSide, setPassSide] = useState("right");
+  const [passExit, setPassExit] = useState(1);
+  const [rotationLaps, setRotationLaps] = useState(1);
+  const [rotationRate, setRotationRate] = useState(30);
+  const targetSkillSelected = ["approach_target", "retreat_target", "turn_to_target", "pass_side", "rotate_full", "land_near_target"].includes(embodiedTask);
   const [mode, setMode] = useState("dry_run");
   const [distance, setDistance] = useState(0.5);
   const takeoffHeight = 0.8;
@@ -104,6 +120,12 @@ function App() {
     if (embodiedTask === "semantic_scan_orbit") return "沿 world +X 扫描 6 m、向 +Y 展开 5 条；发现 chair 后顺时针绕飞一圈并续扫";
     if (embodiedTask === "hybrid_semantic_orbit") return `机载检测 ${targetLabel}，${baselineDirection === "right" ? "右移" : "左移"} ${baselineDistance} m 粗定位，近距离双目精定位后绕飞`;
     if (embodiedTask === "monocular_semantic_orbit") return `D435 左目双位置检测 ${targetLabel}，${baselineDirection === "right" ? "右移" : "左移"} ${baselineDistance} m 后${orbitDirection === "clockwise" ? "顺时针" : "逆时针"}绕飞`;
+    if (embodiedTask === "approach_target") return `接近 ${targetLabel}：参考点距离 ${standOff + objectRadius} m；累计移动上限 ${maxTravel} m`;
+    if (embodiedTask === "retreat_target") return `沿远离 ${targetLabel} 的方向退开 ${retreatDistance} m`;
+    if (embodiedTask === "turn_to_target") return `保持位置，转向面对 ${targetLabel}`;
+    if (embodiedTask === "pass_side") return `从 ${targetLabel} 的${passSide === "left" ? "左" : "右"}侧经过，再向前 ${passExit} m`;
+    if (embodiedTask === "rotate_full") return `原地${orbitDirection === "clockwise" ? "顺时针" : "逆时针"}旋转 ${rotationLaps} 整圈`;
+    if (embodiedTask === "land_near_target") return `在 ${targetLabel} ${passSide === "left" ? "左" : "右"}侧选安全落点并自动降落（需要机载校准门禁通过）`;
     return `机载 YOLO-World 检测 ${targetLabel} 并${orbitDirection === "clockwise" ? "顺时针" : "逆时针"}绕飞`;
   };
 
@@ -121,6 +143,10 @@ function App() {
         parameters: {
           distance_m: distance, takeoff_height_m: takeoffHeight, yaw_deg: yawDeg,
           target_label: scanMissionSelected ? "chair" : targetLabel,
+          target_selector: targetSelector, stand_off_m: standOff, object_radius_m: objectRadius,
+          retreat_distance_m: retreatDistance, max_travel_m: maxTravel,
+          pass_side: passSide, pass_exit_distance_m: passExit,
+          rotation_laps: rotationLaps, rotation_rate_deg_s: rotationRate,
           radius_m: 1.5, laps: 1,
           orbit_direction: (scanMissionSelected || hybridMissionSelected) ? "clockwise" : orbitDirection,
           baseline_distance_m: baselineDistance, baseline_direction: baselineDirection,
@@ -183,8 +209,19 @@ function App() {
             {atomicTask === "orbit_world" ? <div className="parameter-grid"><NumericField label="圆心 X" value={centerX} setValue={setCenterX} min="-1000" max="1000" step="0.1" unit="m" /><NumericField label="圆心 Y" value={centerY} setValue={setCenterY} min="-1000" max="1000" step="0.1" unit="m" /><NumericField label="圆心 Z / 绕飞高度" value={centerZ} setValue={setCenterZ} min="-100" max="100" step="0.1" unit="m" /><NumericField label="绕飞半径" value={radius} setValue={setRadius} min="0.5" max="5" step="0.1" unit="m" /><NumericField label="圈数" value={laps} setValue={setLaps} min="0.25" max="3" step="0.25" unit="圈" /><label className="numeric-field"><span>方向</span><select value={orbitDirection} onChange={(event) => setOrbitDirection(event.target.value)}><option value="clockwise">顺时针</option><option value="counterclockwise">逆时针</option></select></label></div> : <div className="parameter-grid"><NumericField label="移动距离" value={distance} setValue={setDistance} min="0.05" max="2" step="0.05" unit="m" /><div className="numeric-field"><span>起飞相对高度（固定）</span><div>0.8 m</div><small>LIVE 起飞会请求 PX4Ctrl 切换 Offboard、解锁并爬升。</small></div><NumericField label="旋转角度" value={yawDeg} setValue={setYawDeg} min="1" max="90" step="1" unit="°" /></div>}
           </> : <>
             <div className="template-row">{onboardTasks.map(([name, label]) => <button key={name} className={embodiedTask === name ? "selected" : ""} onClick={() => { setEmbodiedTask(name); setTargetLabel("chair"); if (["semantic_scan_orbit", "hybrid_semantic_orbit"].includes(name)) setOrbitDirection("clockwise"); }}>{label}</button>)}</div>
-            <label className="text-field"><span>{scanMissionSelected ? "固定检测目标" : "YOLO-World 英文目标词"}</span><input value={scanMissionSelected ? "chair" : targetLabel} disabled={scanMissionSelected} onChange={(event) => setTargetLabel(event.target.value)} pattern="[A-Za-z][A-Za-z-]{0,31}" placeholder="例如：chair、person、bottle" /></label>
-            <div className="parameter-grid"><div className="numeric-field"><span>板载流水线</span><div>{scanMissionSelected ? "曲线扫描 → YOLO → 双目绕飞 → 断点续扫" : hybridMissionSelected ? "左目粗定位 → 分段靠近 → 双目精定位 → 绕飞" : embodiedTask === "monocular_semantic_orbit" ? "左目 A/B 拍摄 → 实测基线定位 → Diff-Planner → ORBIT" : "YOLO-World → D435 stereo → Diff-Planner → ORBIT"}</div><small>检测、定位和规划均在机载电脑执行，笔记本不进行模型推理。</small></div>{["monocular_semantic_orbit", "hybrid_semantic_orbit"].includes(embodiedTask) && <><NumericField label="第二次横移位移" value={baselineDistance} setValue={setBaselineDistance} min="0.5" max="1" step="0.05" unit="m" /><label className="numeric-field"><span>第二次横移方向</span><select value={baselineDirection} onChange={(event) => setBaselineDirection(event.target.value)}><option value="right">向右横移</option><option value="left">向左横移</option></select></label></>}{!scanMissionSelected && !hybridMissionSelected && <label className="numeric-field"><span>绕飞方向</span><select value={orbitDirection} onChange={(event) => setOrbitDirection(event.target.value)}><option value="clockwise">顺时针</option><option value="counterclockwise">逆时针</option></select></label>}</div>
+            {embodiedTask !== "rotate_full" && <label className="text-field"><span>{scanMissionSelected ? "固定检测目标" : "YOLO-World 英文目标词"}</span><input value={scanMissionSelected ? "chair" : targetLabel} disabled={scanMissionSelected} onChange={(event) => setTargetLabel(event.target.value)} pattern="[A-Za-z][A-Za-z-]{0,31}" placeholder="例如：chair、person、bottle" /></label>}
+            {!targetSkillSelected && <div className="parameter-grid"><div className="numeric-field"><span>板载流水线</span><div>{scanMissionSelected ? "曲线扫描 → YOLO → 双目绕飞 → 断点续扫" : hybridMissionSelected ? "左目粗定位 → 分段靠近 → 双目精定位 → 绕飞" : embodiedTask === "monocular_semantic_orbit" ? "左目 A/B 拍摄 → 实测基线定位 → Diff-Planner → ORBIT" : "YOLO-World → D435 stereo → Diff-Planner → ORBIT"}</div><small>检测、定位和规划均在机载电脑执行，笔记本不进行模型推理。</small></div>{["monocular_semantic_orbit", "hybrid_semantic_orbit"].includes(embodiedTask) && <><NumericField label="第二次横移位移" value={baselineDistance} setValue={setBaselineDistance} min="0.5" max="1" step="0.05" unit="m" /><label className="numeric-field"><span>第二次横移方向</span><select value={baselineDirection} onChange={(event) => setBaselineDirection(event.target.value)}><option value="right">向右横移</option><option value="left">向左横移</option></select></label></>}{!scanMissionSelected && !hybridMissionSelected && <label className="numeric-field"><span>绕飞方向</span><select value={orbitDirection} onChange={(event) => setOrbitDirection(event.target.value)}><option value="clockwise">顺时针</option><option value="counterclockwise">逆时针</option></select></label>}</div>}
+            {targetSkillSelected && <div className="parameter-grid">
+              {embodiedTask !== "rotate_full" && <label className="numeric-field"><span>初始画面目标区域</span><select value={targetSelector} onChange={e => setTargetSelector(e.target.value)}><option value="highest_confidence">全画面最高置信度</option><option value="left">左侧三分之一</option><option value="center">中间三分之一</option><option value="right">右侧三分之一</option></select></label>}
+              {["approach_target", "pass_side", "land_near_target"].includes(embodiedTask) && <><NumericField label="预留间距" value={standOff} setValue={setStandOff} min="1" max="5" step="0.1" unit="m" /><NumericField label="物体范围余量（人工估计）" value={objectRadius} setValue={setObjectRadius} min="0" max="3" step="0.1" unit="m" /></>}
+              {["pass_side", "land_near_target"].includes(embodiedTask) && <label className="numeric-field"><span>目标哪一侧（初始观察方向）</span><select value={passSide} onChange={e => setPassSide(e.target.value)}><option value="left">左侧</option><option value="right">右侧</option></select></label>}
+              {embodiedTask === "pass_side" && <NumericField label="经过后前进距离" value={passExit} setValue={setPassExit} min="0.5" max="3" step="0.1" unit="m" />}
+              {embodiedTask === "rotate_full" && <><label className="numeric-field"><span>旋转方向</span><select value={orbitDirection} onChange={e => setOrbitDirection(e.target.value)}><option value="clockwise">顺时针</option><option value="counterclockwise">逆时针</option></select></label><NumericField label="完整圈数" value={rotationLaps} setValue={setRotationLaps} min="1" max="3" step="1" unit="圈" /><NumericField label="旋转速度上限" value={rotationRate} setValue={setRotationRate} min="10" max="45" step="5" unit="°/s" /></>}
+              {embodiedTask === "land_near_target" && <small>含桨直径 1 m，检查半径至少 0.8 m；未知地面／净空不足不降落。默认机载校准门禁关闭。移向落点前可停止；进入飞控自动降落后如需中断请用遥控器接管，不能将停止按钮视为已中止下降。</small>}
+              {embodiedTask === "retreat_target" && <NumericField label="远离距离" value={retreatDistance} setValue={setRetreatDistance} min="0.2" max="3" step="0.1" unit="m" />}
+              <NumericField label="累计移动上限" value={maxTravel} setValue={setMaxTravel} min="1" max="15" step="0.5" unit="m" />
+              <small>需先稳定悬停。左右指初始画面区域；接近终点距离为间距＋范围余量，不是自动测得的物体表面距离。远离保持航向，面对目标保持位置。仅用于静态目标。</small>
+            </div>}
           </>}
 
           <div className="dispatch-settings"><label><span>执行位置</span><div>{category === "atomic" ? "板载原子飞行技能" : "板载视觉与 Diff-Planner 流水线"}</div></label><label><span>模式</span><select value={mode} onChange={(event) => setMode(event.target.value)}><option value="dry_run">Dry-run（不下发）</option><option value="live">Live（实机）</option></select></label></div>

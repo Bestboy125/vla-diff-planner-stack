@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.0.2)
+project(target_interaction)
+find_package(catkin REQUIRED COMPONENTS rospy actionlib actionlib_msgs atomic_skill_executor geometry_msgs nav_msgs mavros_msgs std_msgs quadrotor_msgs)
+catkin_package()
+catkin_install_python(PROGRAMS scripts/target_interaction_node.py DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+install(FILES scripts/target_geometry.py scripts/landing_safety.py scripts/landing_observer.py DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+install(DIRECTORY launch DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})

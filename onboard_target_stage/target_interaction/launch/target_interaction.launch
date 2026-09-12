@@ -1,0 +1,20 @@
+<launch>
+  <arg name="execution_enabled" default="false"/>
+  <arg name="altitude_reference_z_m" default="0.0"/>
+  <arg name="min_operating_altitude" default="0.3"/>
+  <arg name="max_operating_altitude" default="2.0"/>
+  <!-- Do not guess LiDAR frame/extrinsics or enable this before sensor/ground verification. -->
+  <arg name="landing_geometry_verified" default="false"/>
+  <arg name="landing_sensor_frame" default=""/>
+  <arg name="landing_cloud_topic" default="/laserMapping/cloud_registered"/>
+  <node pkg="target_interaction" type="target_interaction_node.py" name="target_interaction" output="screen" required="true">
+    <param name="execution_enabled" value="$(arg execution_enabled)"/>
+    <param name="altitude_reference_z_m" value="$(arg altitude_reference_z_m)"/>
+    <param name="min_operating_altitude" value="$(arg min_operating_altitude)"/>
+    <param name="max_operating_altitude" value="$(arg max_operating_altitude)"/>
+    <param name="landing_geometry_verified" value="$(arg landing_geometry_verified)"/>
+    <param name="landing_sensor_frame" value="$(arg landing_sensor_frame)"/>
+    <param name="landing_cloud_topic" value="$(arg landing_cloud_topic)"/>
+    <param name="landing_footprint_radius_m" value="0.8"/>
+  </node>
+</launch>

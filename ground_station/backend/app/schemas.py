@@ -59,6 +59,12 @@ class EmbodiedTaskName(str, Enum):
     MONOCULAR_SEMANTIC_ORBIT = "monocular_semantic_orbit"
     SEMANTIC_SCAN_ORBIT = "semantic_scan_orbit"
     HYBRID_SEMANTIC_ORBIT = "hybrid_semantic_orbit"
+    APPROACH_TARGET = "approach_target"
+    RETREAT_TARGET = "retreat_target"
+    TURN_TO_TARGET = "turn_to_target"
+    PASS_SIDE = "pass_side"
+    ROTATE_FULL = "rotate_full"
+    LAND_NEAR_TARGET = "land_near_target"
 
 
 class OrbitDirection(str, Enum):
@@ -106,6 +112,15 @@ class TaskParameters(BaseModel):
     # executor still validates the measured camera baseline from Fast-LIO/EKF.
     baseline_distance_m: float = Field(default=0.6, ge=0.5, le=1.0)
     baseline_direction: BaselineDirection = BaselineDirection.RIGHT
+    target_selector: str = Field(default="highest_confidence", pattern="^(highest_confidence|left|center|right)$")
+    stand_off_m: float = Field(default=1.5, ge=1.0, le=5.0)
+    object_radius_m: float = Field(default=0.5, ge=0.0, le=3.0)
+    retreat_distance_m: float = Field(default=1.0, ge=0.2, le=3.0)
+    max_travel_m: float = Field(default=10.0, ge=1.0, le=15.0)
+    pass_side: str = Field(default="right", pattern="^(left|right)$")
+    pass_exit_distance_m: float = Field(default=1.0, ge=0.5, le=3.0)
+    rotation_laps: int = Field(default=1, ge=1, le=3, strict=True)
+    rotation_rate_deg_s: float = Field(default=30.0, ge=10.0, le=45.0)
 
     @field_validator("target_label")
     @classmethod
@@ -142,6 +157,11 @@ class TaskDispatchRequest(BaseModel):
                 raise ValueError("atomic_task is not valid for an embodied task")
             if self.embodied_task == EmbodiedTaskName.FREEFORM and len(self.instruction) < 2:
                 raise ValueError("freeform embodied tasks require an instruction")
+            if self.embodied_task in {EmbodiedTaskName.APPROACH_TARGET, EmbodiedTaskName.RETREAT_TARGET, EmbodiedTaskName.TURN_TO_TARGET, EmbodiedTaskName.PASS_SIDE, EmbodiedTaskName.LAND_NEAR_TARGET}:
+                if re.fullmatch(r"[A-Za-z][A-Za-z-]{0,31}", self.parameters.target_label) is None:
+                    raise ValueError("target_label must be one English word")
+                if self.embodied_task == EmbodiedTaskName.RETREAT_TARGET and self.parameters.retreat_distance_m > self.parameters.max_travel_m:
+                    raise ValueError("retreat distance exceeds task travel budget")
             if self.embodied_task in {
                 EmbodiedTaskName.ORBIT_TARGET,
                 EmbodiedTaskName.PASS_TARGET_FORWARD,

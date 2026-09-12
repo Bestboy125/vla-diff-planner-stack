@@ -283,6 +283,8 @@ class SemanticRawStereoNode(object):
         self.require_body_frame = bool(gp("~require_body_frame", True))
         self.allow_empty_odom_child_frame = bool(gp("~allow_empty_odom_child_frame", False))
         self.target_class = gp("~target_class", "person")
+        self.target_selector = 'highest_confidence'
+        rospy.set_param('~target_selector_modes', ['highest_confidence', 'left', 'center', 'right'])
         self.classes = gp("~classes", [self.target_class])
         self.confidence = float(gp("~confidence", 0.20))
         self.device = gp("~device", 0)
@@ -422,6 +424,17 @@ class SemanticRawStereoNode(object):
 
     def on_target_class_command(self, message):
         target_class = message.data.strip().lower()
+        selector = 'highest_confidence'
+        if target_class.startswith('{'):
+            try:
+                spec = json.loads(message.data)
+                target_class = spec['target_label'].strip().lower()
+                selector = spec.get('selector', 'highest_confidence')
+                if selector not in ('highest_confidence', 'left', 'center', 'right'):
+                    raise ValueError('invalid target selector')
+            except (ValueError, KeyError, TypeError, AttributeError):
+                rospy.logwarn('rejected target selection command')
+                return
         if re.fullmatch(r"[a-z][a-z-]{0,31}", target_class) is None:
             rospy.logwarn("rejected target class; expected one English word")
             return
@@ -429,6 +442,7 @@ class SemanticRawStereoNode(object):
             if self.model is not None:
                 self.model.set_classes([target_class])
             self.target_class = target_class
+            self.target_selector = selector
             self.classes = [target_class]
             with self.lock:
                 self.target_history.clear()
@@ -487,6 +501,23 @@ class SemanticRawStereoNode(object):
                 self.busy = False
 
     def select_detection(self, image, header):
+        selector = getattr(self, 'target_selector', 'highest_confidence')
+        if selector == 'highest_confidence':
+            return self._select_detection(image, header)
+        if isinstance(self.debug_bbox, (list, tuple)) and len(self.debug_bbox) == 4:
+            raise ValueError('regional selection is unavailable with debug_bbox')
+        width = image.shape[1]
+        index = ('left', 'center', 'right').index(selector)
+        x0, x1 = width * index // 3, width * (index + 1) // 3
+        selected = self._select_detection(image[:, x0:x1].copy(), header)
+        if selected is None:
+            return None
+        score, box, source = selected
+        if not (0 <= box[0] < box[2] <= x1-x0 and 0 <= box[1] < box[3] <= image.shape[0]):
+            raise ValueError('detector box outside selected image region')
+        return score, [box[0]+x0, box[1], box[2]+x0, box[3]], source
+
+    def _select_detection(self, image, header):
         if isinstance(self.debug_bbox, (list, tuple)) and len(self.debug_bbox) == 4:
             return 1.0, [float(value) for value in self.debug_bbox], "debug_bbox"
         if self.detect_proxy is not None:

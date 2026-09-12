@@ -79,6 +79,12 @@ class TaskDispatcher:
                 for task in AtomicTaskName
             ],
             "embodied_tasks": [
+                {"name": "approach_target", "label": "分阶段接近目标"},
+                {"name": "retreat_target", "label": "远离目标"},
+                {"name": "turn_to_target", "label": "转向面对目标"},
+                {"name": "pass_side", "label": "指定侧经过目标"},
+                {"name": "rotate_full", "label": "整圈原地旋转"},
+                {"name": "land_near_target", "label": "目标旁选点并降落"},
                 {
                     "name": EmbodiedTaskName.SEMANTIC_ORBIT.value,
                     "label": "YOLO-World 语义目标接近并绕飞",
@@ -231,6 +237,8 @@ class TaskDispatcher:
         }
 
     async def _dispatch_embodied(self, request: TaskDispatchRequest) -> dict[str, Any]:
+        if request.embodied_task in {EmbodiedTaskName.APPROACH_TARGET, EmbodiedTaskName.RETREAT_TARGET, EmbodiedTaskName.TURN_TO_TARGET, EmbodiedTaskName.PASS_SIDE, EmbodiedTaskName.ROTATE_FULL, EmbodiedTaskName.LAND_NEAR_TARGET}:
+            return await self._dispatch_target_skill(request)
         if request.embodied_task == EmbodiedTaskName.SEMANTIC_ORBIT:
             return await self._dispatch_semantic_orbit(request)
         if request.embodied_task == EmbodiedTaskName.MONOCULAR_SEMANTIC_ORBIT:
@@ -263,6 +271,45 @@ class TaskDispatcher:
                 "detail": "Waiting for the next K-frame VLA inference cycle.",
             },
         }
+
+    async def _dispatch_target_skill(self, request: TaskDispatchRequest) -> dict[str, Any]:
+        task_id = str(uuid4())
+        async with self._lock:
+            sequence = self._sequence
+            self._sequence += 1
+        action, label = {
+            EmbodiedTaskName.APPROACH_TARGET: ('APPROACH', '分阶段接近目标'),
+            EmbodiedTaskName.RETREAT_TARGET: ('RETREAT', '远离目标'),
+            EmbodiedTaskName.TURN_TO_TARGET: ('TURN', '转向面对目标'),
+            EmbodiedTaskName.PASS_SIDE: ('PASS', '指定侧经过目标'),
+            EmbodiedTaskName.ROTATE_FULL: ('ROTATE', '整圈原地旋转'),
+            EmbodiedTaskName.LAND_NEAR_TARGET: ('LAND', '目标旁选点并降落'),
+        }[request.embodied_task]
+        p = request.parameters
+        command = dict(schema_version=3, type='operator_task', task_id=task_id,
+                       sequence=sequence, sent_at_unix_ms=int(time.time()*1000),
+                       ttl_ms=self.command_ttl_ms, command='TARGET_SKILL',
+                       frame_id=self.world_frame, body_frame_id=self.body_frame,
+                       magnitude=0.0, magnitude_unit='none',
+                       target_skill=dict(action=action, target_label=p.target_label.lower(),
+                                         selector=p.target_selector, stand_off_m=p.stand_off_m,
+                                         object_radius_m=p.object_radius_m, distance_m=p.retreat_distance_m,
+                                         max_travel_m=p.max_travel_m))
+        if action in ('PASS','LAND'):
+            command['target_skill'].update(side=p.pass_side,exit_distance_m=p.pass_exit_distance_m)
+        if action=='ROTATE':
+            command['target_skill'].update(rotation_direction=p.orbit_direction.value,
+                rotation_laps=p.rotation_laps,rotation_rate_deg_s=p.rotation_rate_deg_s)
+        if request.mode == MissionMode.DRY_RUN:
+            delivery = dict(status='safety_locked', detail='Target skill validated; dry-run sends nothing to the aircraft.')
+        else:
+            try:
+                delivery = await self.onboard_bridge.send(command)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return dict(task_id=task_id, category=request.category.value, task=request.embodied_task.value,
+                    label=label, mode=request.mode.value, created_unix_ms=int(time.time()*1000),
+                    command=command, delivery=delivery)
 
     async def _dispatch_semantic_orbit(self, request: TaskDispatchRequest) -> dict[str, Any]:
         task_id = str(uuid4())
